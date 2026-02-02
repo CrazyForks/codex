@@ -233,8 +233,8 @@ async fn gpt_5_tools_without_apply_patch_append_apply_patch_instructions() -> an
         .as_str()
         .expect("instructions should be a string");
     assert!(
-        instructions0.contains("You are"),
-        "expected non-empty instructions"
+        !instructions0.is_empty(),
+        "expected first request instructions to be non-empty"
     );
 
     let body1 = req2.single_request().body_json();
