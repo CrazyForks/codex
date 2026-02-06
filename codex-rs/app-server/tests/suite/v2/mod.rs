@@ -16,6 +16,7 @@ mod request_user_input;
 mod review;
 mod skills_list;
 mod thread_archive;
+mod thread_close;
 mod thread_fork;
 mod thread_list;
 mod thread_loaded_list;
