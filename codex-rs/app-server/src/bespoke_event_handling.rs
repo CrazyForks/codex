@@ -724,6 +724,10 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .await;
             };
 
+            if !ev.affects_turn_status() {
+                return;
+            }
+
             let turn_error = TurnError {
                 message: ev.message,
                 codex_error_info: ev.codex_error_info.map(V2CodexErrorInfo::from),

@@ -1005,6 +1005,27 @@ pub enum CodexErrorInfo {
     Other,
 }
 
+impl CodexErrorInfo {
+    /// Whether this error should mark the current turn as failed when replaying history.
+    pub fn affects_turn_status(&self) -> bool {
+        match self {
+            Self::ThreadRollbackFailed => false,
+            Self::ContextWindowExceeded
+            | Self::UsageLimitExceeded
+            | Self::ModelCap { .. }
+            | Self::HttpConnectionFailed { .. }
+            | Self::ResponseStreamConnectionFailed { .. }
+            | Self::InternalServerError
+            | Self::Unauthorized
+            | Self::BadRequest
+            | Self::SandboxError
+            | Self::ResponseStreamDisconnected { .. }
+            | Self::ResponseTooManyFailedAttempts { .. }
+            | Self::Other => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, TS, JsonSchema)]
 pub struct RawResponseItemEvent {
     pub item: ResponseItem,
@@ -1140,6 +1161,15 @@ pub struct ErrorEvent {
     pub message: String,
     #[serde(default)]
     pub codex_error_info: Option<CodexErrorInfo>,
+}
+
+impl ErrorEvent {
+    /// Whether this error should mark the current turn as failed when replaying history.
+    pub fn affects_turn_status(&self) -> bool {
+        self.codex_error_info
+            .as_ref()
+            .is_none_or(CodexErrorInfo::affects_turn_status)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
@@ -2590,6 +2620,24 @@ mod tests {
         };
 
         assert!(event.as_legacy_events(false).is_empty());
+    }
+
+    #[test]
+    fn rollback_failed_error_does_not_affect_turn_status() {
+        let event = ErrorEvent {
+            message: "rollback failed".into(),
+            codex_error_info: Some(CodexErrorInfo::ThreadRollbackFailed),
+        };
+        assert!(!event.affects_turn_status());
+    }
+
+    #[test]
+    fn generic_error_affects_turn_status() {
+        let event = ErrorEvent {
+            message: "generic".into(),
+            codex_error_info: Some(CodexErrorInfo::Other),
+        };
+        assert!(event.affects_turn_status());
     }
 
     #[test]
