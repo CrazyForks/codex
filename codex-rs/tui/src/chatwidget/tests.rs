@@ -1800,6 +1800,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
             "this is a test reason such as one that would be produced by the model".into(),
         ),
         proposed_execpolicy_amendment: None,
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -1844,6 +1845,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
             "this is a test reason such as one that would be produced by the model".into(),
         ),
         proposed_execpolicy_amendment: None,
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -1894,6 +1896,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         reason: None,
         proposed_execpolicy_amendment: None,
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -4347,6 +4350,7 @@ async fn approval_modal_exec_snapshot() -> anyhow::Result<()> {
             "hello".into(),
             "world".into(),
         ])),
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -4400,6 +4404,7 @@ async fn approval_modal_exec_without_reason_snapshot() -> anyhow::Result<()> {
             "hello".into(),
             "world".into(),
         ])),
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -4440,6 +4445,7 @@ async fn approval_modal_exec_multiline_prefix_hides_execpolicy_option_snapshot()
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         reason: None,
         proposed_execpolicy_amendment: Some(ExecPolicyAmendment::new(command)),
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {
@@ -4738,6 +4744,7 @@ async fn status_widget_and_approval_modal_snapshot() {
             "echo".into(),
             "hello world".into(),
         ])),
+        network_approval_context: None,
         parsed_cmd: vec![],
     };
     chat.handle_codex_event(Event {

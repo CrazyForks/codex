@@ -2366,6 +2366,7 @@ impl ChatWidget {
             id,
             command: ev.command,
             reason: ev.reason,
+            network_approval_context: ev.network_approval_context,
             proposed_execpolicy_amendment: ev.proposed_execpolicy_amendment,
         };
         self.bottom_pane

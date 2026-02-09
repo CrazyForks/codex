@@ -13,6 +13,7 @@ use crate::sandboxing::SandboxManager;
 use crate::sandboxing::SandboxTransformError;
 use crate::state::SessionServices;
 use codex_protocol::approvals::ExecPolicyAmendment;
+use codex_protocol::approvals::NetworkApprovalContext;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use std::collections::HashMap;
@@ -109,6 +110,7 @@ pub(crate) struct ApprovalCtx<'a> {
     pub turn: &'a TurnContext,
     pub call_id: &'a str,
     pub retry_reason: Option<String>,
+    pub network_approval_context: Option<NetworkApprovalContext>,
 }
 
 // Specifies what tool orchestrator should do with a given tool call.
