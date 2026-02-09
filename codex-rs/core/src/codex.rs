@@ -3870,10 +3870,9 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
-    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input.clone());
     let total_usage_tokens = sess.get_total_token_usage().await;
-    let incoming_user_tokens = {
-        let response_item: ResponseItem = initial_input_for_turn.clone().into();
+    let response_item: ResponseItem = ResponseInputItem::from(input.clone()).into();
+    let incoming_user_tokens_estimate = {
         let model_visible_bytes = estimate_response_item_model_visible_bytes(&response_item);
         approx_tokens_from_byte_count_i64(model_visible_bytes)
     };
@@ -3886,7 +3885,7 @@ pub(crate) async fn run_turn(
     sess.send_event(&turn_context, event).await;
     if is_projected_submission_over_auto_compact_limit(
         total_usage_tokens,
-        incoming_user_tokens,
+        incoming_user_tokens_estimate,
         auto_compact_limit,
     ) {
         if run_auto_compact(&sess, &turn_context, AutoCompactCallsite::PreTurn)
@@ -3899,20 +3898,22 @@ pub(crate) async fn run_turn(
         let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
         if is_projected_submission_over_auto_compact_limit(
             total_usage_tokens_after_compact,
-            incoming_user_tokens,
+            incoming_user_tokens_estimate,
             auto_compact_limit,
         ) {
             error!(
                 turn_id = %turn_context.sub_id,
                 auto_compact_callsite = ?AutoCompactCallsite::PreTurn,
                 total_usage_tokens_after_compact,
-                incoming_user_tokens,
+                incoming_user_tokens_estimate,
                 auto_compact_limit,
-                "context still exceeds auto-compaction limit after auto-compaction"
+                "incoming user message is likely too large to fit after auto-compaction"
             );
-            let event = EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(
-                "Context still exceeds auto-compaction limit after auto-compaction".to_string(),
-            )));
+            let message = format!(
+                "Incoming user message is likely too large to fit after auto-compaction (incoming_user_tokens_estimate={incoming_user_tokens_estimate})."
+            );
+            let event =
+                EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
             sess.send_event(&turn_context, event).await;
             return None;
         }
@@ -3988,7 +3989,6 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    let response_item: ResponseItem = initial_input_for_turn.clone().into();
     sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
         .await;
 
@@ -4161,14 +4161,14 @@ pub(crate) async fn run_turn(
 
 fn is_projected_submission_over_auto_compact_limit(
     total_usage_tokens: i64,
-    incoming_user_tokens: i64,
+    incoming_user_tokens_estimate: i64,
     auto_compact_limit: i64,
 ) -> bool {
     if auto_compact_limit == i64::MAX {
         return false;
     }
 
-    total_usage_tokens.saturating_add(incoming_user_tokens) >= auto_compact_limit
+    total_usage_tokens.saturating_add(incoming_user_tokens_estimate) >= auto_compact_limit
 }
 
 async fn run_auto_compact(
