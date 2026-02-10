@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use crate::client_common::tools::ToolSpec;
 use crate::exec::SandboxType;
@@ -11,6 +12,12 @@ use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use async_trait::async_trait;
+use codex_hooks::HookEvent;
+use codex_hooks::HookEventAfterToolUse;
+use codex_hooks::HookPayload;
+use codex_hooks::HookToolInput;
+use codex_hooks::HookToolInputLocalShell;
+use codex_hooks::HookToolKind;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::ResponseInputItem;
 use codex_utils_readiness::Readiness;
@@ -105,6 +112,15 @@ impl ToolRegistry {
                     &message,
                     &metric_tags,
                 );
+                dispatch_after_tool_use_hook(AfterToolUseHookDispatch {
+                    invocation: &invocation,
+                    output_preview: message.clone(),
+                    success: false,
+                    executed: false,
+                    duration: Duration::ZERO,
+                    mutating: false,
+                })
+                .await;
                 return Err(FunctionCallError::RespondToModel(message));
             }
         };
@@ -120,11 +136,23 @@ impl ToolRegistry {
                 &message,
                 &metric_tags,
             );
+            dispatch_after_tool_use_hook(AfterToolUseHookDispatch {
+                invocation: &invocation,
+                output_preview: message.clone(),
+                success: false,
+                executed: false,
+                duration: Duration::ZERO,
+                mutating: false,
+            })
+            .await;
             return Err(FunctionCallError::Fatal(message));
         }
 
+        let is_mutating = handler.is_mutating(&invocation).await;
         let output_cell = tokio::sync::Mutex::new(None);
+        let invocation_for_tool = invocation.clone();
 
+        let started = Instant::now();
         let result = otel
             .log_tool_result_with_tags(
                 tool_name.as_ref(),
@@ -134,9 +162,9 @@ impl ToolRegistry {
                 || {
                     let handler = handler.clone();
                     let output_cell = &output_cell;
-                    let invocation = invocation;
+                    let invocation = invocation_for_tool.clone();
                     async move {
-                        if handler.is_mutating(&invocation).await {
+                        if is_mutating {
                             tracing::trace!("waiting for tool gate");
                             invocation.turn.tool_call_gate.wait_ready().await;
                             tracing::trace!("tool gate released");
@@ -155,6 +183,20 @@ impl ToolRegistry {
                 },
             )
             .await;
+        let duration = started.elapsed();
+        let (output_preview, success) = match &result {
+            Ok((preview, success)) => (preview.clone(), *success),
+            Err(err) => (err.to_string(), false),
+        };
+        dispatch_after_tool_use_hook(AfterToolUseHookDispatch {
+            invocation: &invocation,
+            output_preview,
+            success,
+            executed: true,
+            duration,
+            mutating: is_mutating,
+        })
+        .await;
 
         match result {
             Ok(_) => {
@@ -276,4 +318,86 @@ fn sandbox_policy_tag(policy: &SandboxPolicy) -> &'static str {
         SandboxPolicy::DangerFullAccess => "danger-full-access",
         SandboxPolicy::ExternalSandbox { .. } => "external-sandbox",
     }
+}
+
+// Hooks use a separate wire-facing input type so hook payload JSON stays stable
+// and decoupled from core's internal tool runtime representation.
+fn hook_tool_input(payload: &ToolPayload) -> HookToolInput {
+    match payload {
+        ToolPayload::Function { arguments } => HookToolInput::Function {
+            arguments: arguments.clone(),
+        },
+        ToolPayload::Custom { input } => HookToolInput::Custom {
+            input: input.clone(),
+        },
+        ToolPayload::LocalShell { params } => HookToolInput::LocalShell {
+            params: HookToolInputLocalShell {
+                command: params.command.clone(),
+                workdir: params.workdir.clone(),
+                timeout_ms: params.timeout_ms,
+                sandbox_permissions: params.sandbox_permissions,
+                prefix_rule: params.prefix_rule.clone(),
+                justification: params.justification.clone(),
+            },
+        },
+        ToolPayload::Mcp {
+            server,
+            tool,
+            raw_arguments,
+        } => HookToolInput::Mcp {
+            server: server.clone(),
+            tool: tool.clone(),
+            arguments: raw_arguments.clone(),
+        },
+    }
+}
+
+fn hook_tool_kind(tool_input: &HookToolInput) -> HookToolKind {
+    match tool_input {
+        HookToolInput::Function { .. } => HookToolKind::Function,
+        HookToolInput::Custom { .. } => HookToolKind::Custom,
+        HookToolInput::LocalShell { .. } => HookToolKind::LocalShell,
+        HookToolInput::Mcp { .. } => HookToolKind::Mcp,
+    }
+}
+
+struct AfterToolUseHookDispatch<'a> {
+    invocation: &'a ToolInvocation,
+    output_preview: String,
+    success: bool,
+    executed: bool,
+    duration: Duration,
+    mutating: bool,
+}
+
+async fn dispatch_after_tool_use_hook(dispatch: AfterToolUseHookDispatch<'_>) {
+    let AfterToolUseHookDispatch { invocation, .. } = dispatch;
+    let session = invocation.session.as_ref();
+    let turn = invocation.turn.as_ref();
+    let tool_input = hook_tool_input(&invocation.payload);
+    session
+        .hooks()
+        .dispatch(HookPayload {
+            session_id: session.conversation_id,
+            cwd: turn.cwd.clone(),
+            triggered_at: chrono::Utc::now(),
+            hook_event: HookEvent::AfterToolUse {
+                event: HookEventAfterToolUse {
+                    turn_id: turn.sub_id.clone(),
+                    call_id: invocation.call_id.clone(),
+                    tool_name: invocation.tool_name.clone(),
+                    tool_kind: hook_tool_kind(&tool_input),
+                    tool_input,
+                    executed: dispatch.executed,
+                    success: dispatch.success,
+                    duration_ms: u64::try_from(dispatch.duration.as_millis()).unwrap_or(u64::MAX),
+                    mutating: dispatch.mutating,
+                    sandbox: sandbox_tag(&turn.sandbox_policy, turn.windows_sandbox_level)
+                        .to_string(),
+                    sandbox_policy: sandbox_policy_tag(&turn.sandbox_policy).to_string(),
+                    output_preview: dispatch.output_preview.clone(),
+                },
+            },
+        })
+        .await;
 }
