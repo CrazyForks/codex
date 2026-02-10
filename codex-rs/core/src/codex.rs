@@ -2499,17 +2499,6 @@ impl Session {
         self.ensure_rollout_materialized().await;
     }
 
-    pub(crate) async fn emit_user_prompt_turn_item(
-        &self,
-        turn_context: &TurnContext,
-        input: &[UserInput],
-    ) {
-        let turn_item = TurnItem::UserMessage(UserMessageItem::new(input));
-        self.emit_turn_item_started(turn_context, &turn_item).await;
-        self.emit_turn_item_completed(turn_context, turn_item).await;
-        self.ensure_rollout_materialized().await;
-    }
-
     pub(crate) async fn notify_background_event(
         &self,
         turn_context: &TurnContext,
@@ -3968,8 +3957,12 @@ pub(crate) async fn run_turn(
         PreTurnCompactionOutcome::CompactedWithIncomingItems => {
             // Incoming turn items were already part of pre-turn compaction input, and the
             // user prompt is already in history after compaction. Emit lifecycle events only.
-            sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
+            let turn_item = TurnItem::UserMessage(UserMessageItem::new(&input));
+            sess.emit_turn_item_started(turn_context.as_ref(), &turn_item)
                 .await;
+            sess.emit_turn_item_completed(turn_context.as_ref(), turn_item)
+                .await;
+            sess.ensure_rollout_materialized().await;
         }
         PreTurnCompactionOutcome::NotNeeded
         | PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
