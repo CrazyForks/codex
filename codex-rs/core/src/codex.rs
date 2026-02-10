@@ -2189,14 +2189,9 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         compacted_history: Vec<ResponseItem>,
-        auto_compact_callsite: AutoCompactCallsite,
     ) -> Vec<ResponseItem> {
         let initial_context = self.build_initial_context(turn_context).await;
-        compact::process_compacted_history(
-            compacted_history,
-            &initial_context,
-            auto_compact_callsite,
-        )
+        compact::process_compacted_history(compacted_history, &initial_context)
     }
 
     /// Append ResponseItems to the in-memory conversation history only.

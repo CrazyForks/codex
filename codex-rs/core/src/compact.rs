@@ -296,7 +296,6 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 pub(crate) fn process_compacted_history(
     mut compacted_history: Vec<ResponseItem>,
     initial_context: &[ResponseItem],
-    _auto_compact_callsite: AutoCompactCallsite,
 ) -> Vec<ResponseItem> {
     compacted_history.retain(should_keep_compacted_history_item);
     move_summary_user_messages_to_end(&mut compacted_history);
@@ -727,11 +726,7 @@ do things
             },
         ];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -840,11 +835,7 @@ keep me updated
             },
         ];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -980,11 +971,7 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1049,11 +1036,7 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::MidTurnContinuation,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1127,11 +1110,7 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1196,11 +1175,7 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(
-            compacted_history,
-            &initial_context,
-            AutoCompactCallsite::MidTurnContinuation,
-        );
+        let refreshed = process_compacted_history(compacted_history, &initial_context);
         let expected = vec![
             ResponseItem::Message {
                 id: None,

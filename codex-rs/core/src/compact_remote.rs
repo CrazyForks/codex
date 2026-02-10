@@ -154,7 +154,7 @@ async fn run_remote_compact_task_inner_impl(
         })
         .await?;
     new_history = sess
-        .process_compacted_history(turn_context, new_history, auto_compact_callsite)
+        .process_compacted_history(turn_context, new_history)
         .await;
 
     if !ghost_snapshots.is_empty() {
