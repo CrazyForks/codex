@@ -530,6 +530,7 @@ fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()
 model = "mock-model"
 approval_policy = "untrusted"
 sandbox_mode = "danger-full-access"
+apps_mcp_url = "{server_uri}/api/codex/apps"
 
 model_provider = "mock_provider"
 
