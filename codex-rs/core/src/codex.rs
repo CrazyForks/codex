@@ -3970,16 +3970,26 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    if !pre_turn_context_items.is_empty() {
-        sess.record_conversation_items(&turn_context, &pre_turn_context_items)
+    match pre_turn_compaction_outcome {
+        PreTurnCompactionOutcome::IncomingItemsIncluded => {
+            // Incoming turn items were already part of pre-turn compaction input, and the
+            // user prompt is already in history after compaction. Emit lifecycle events only.
+            sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
+                .await;
+        }
+        PreTurnCompactionOutcome::NotNeeded
+        | PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
+            if !pre_turn_context_items.is_empty() {
+                sess.record_conversation_items(&turn_context, &pre_turn_context_items)
+                    .await;
+            }
+            sess.record_user_prompt_and_emit_turn_item(
+                turn_context.as_ref(),
+                &input,
+                response_item,
+            )
             .await;
-    }
-    if pre_turn_compaction_outcome == PreTurnCompactionOutcome::IncomingItemsIncluded {
-        sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
-            .await;
-    } else {
-        sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
-            .await;
+        }
     }
 
     if !skill_items.is_empty() {
