@@ -54,7 +54,7 @@ pub(crate) async fn run_remote_compact_task(
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
-        AutoCompactCallsite::PreTurn,
+        AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
         None,
         true,
     )

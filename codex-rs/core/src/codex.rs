@@ -4213,7 +4213,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     if run_auto_compact(
         sess,
         turn_context,
-        AutoCompactCallsite::PreTurn,
+        AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         Some(incoming_turn_items.to_vec()),
         false,
     )
@@ -4228,7 +4228,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     if run_auto_compact(
         sess,
         turn_context,
-        AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+        AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
         None,
         false,
     )
@@ -4238,7 +4238,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
         send_pre_turn_too_large_error_event(
             sess,
             turn_context,
-            AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+            AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
             incoming_items_tokens_estimate,
             auto_compact_limit,
             "pre-turn fallback compaction without incoming items failed",
@@ -4262,7 +4262,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
         send_pre_turn_too_large_error_event(
             sess,
             turn_context,
-            AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+            AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
             incoming_items_tokens_estimate,
             auto_compact_limit,
             "incoming user/context still exceeds context window after fallback compaction",

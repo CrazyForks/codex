@@ -34,8 +34,8 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AutoCompactCallsite {
-    PreTurn,
-    PreTurnFallbackWithoutIncoming,
+    PreTurnIncludingIncomingUserMessage,
+    PreTurnExcludingIncomingUserMessage,
     MidTurnContinuation,
 }
 
@@ -731,7 +731,7 @@ do things
         let refreshed = process_compacted_history(
             compacted_history,
             &initial_context,
-            AutoCompactCallsite::PreTurn,
+            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         );
         let expected = vec![
             ResponseItem::Message {
@@ -844,7 +844,7 @@ keep me updated
         let refreshed = process_compacted_history(
             compacted_history,
             &initial_context,
-            AutoCompactCallsite::PreTurn,
+            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         );
         let expected = vec![
             ResponseItem::Message {
@@ -984,7 +984,7 @@ keep me updated
         let refreshed = process_compacted_history(
             compacted_history,
             &initial_context,
-            AutoCompactCallsite::PreTurn,
+            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         );
         let expected = vec![
             ResponseItem::Message {
@@ -1131,7 +1131,7 @@ keep me updated
         let refreshed = process_compacted_history(
             compacted_history,
             &initial_context,
-            AutoCompactCallsite::PreTurn,
+            AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         );
         let expected = vec![
             ResponseItem::Message {
