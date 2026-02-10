@@ -75,6 +75,12 @@ async fn run_remote_compact_task_inner(
     )
     .await
     {
+        error!(
+            turn_id = %turn_context.sub_id,
+            auto_compact_callsite = ?auto_compact_callsite,
+            compact_error = %err,
+            "remote compaction task failed"
+        );
         if emit_error_events {
             let event = EventMsg::Error(
                 err.to_error_event(Some("Error running remote compact task".to_string())),

@@ -191,6 +191,12 @@ async fn run_compact_task_inner(
                     continue;
                 }
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
+                error!(
+                    turn_id = %turn_context.sub_id,
+                    auto_compact_callsite = ?auto_compact_callsite,
+                    compact_error = %e,
+                    "compaction failed after history truncation could not proceed"
+                );
                 return Err(e);
             }
             Err(e) => {
@@ -206,6 +212,14 @@ async fn run_compact_task_inner(
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {
+                    error!(
+                        turn_id = %turn_context.sub_id,
+                        auto_compact_callsite = ?auto_compact_callsite,
+                        retries,
+                        max_retries,
+                        compact_error = %e,
+                        "compaction failed after retry exhaustion"
+                    );
                     return Err(e);
                 }
             }
