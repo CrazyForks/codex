@@ -4091,16 +4091,18 @@ pub(crate) async fn run_turn(
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
                 if token_limit_reached && needs_follow_up {
-                    if run_auto_compact(
+                    if let Err(err) = run_auto_compact(
                         &sess,
                         &turn_context,
                         AutoCompactCallsite::MidTurnContinuation,
                         None,
-                        true,
                     )
                     .await
-                    .is_err()
                     {
+                        let event = EventMsg::Error(
+                            err.to_error_event(Some("Error running auto compact task".to_string())),
+                        );
+                        sess.send_event(&turn_context, event).await;
                         return None;
                     }
                     continue;
@@ -4191,7 +4193,6 @@ async fn run_pre_turn_auto_compaction_if_needed(
         turn_context,
         AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         Some(incoming_turn_items.to_vec()),
-        false,
     )
     .await
     .is_ok()
@@ -4206,7 +4207,6 @@ async fn run_pre_turn_auto_compaction_if_needed(
         turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
         None,
-        false,
     )
     .await
     .is_err()
@@ -4247,7 +4247,6 @@ async fn run_auto_compact(
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
     incoming_items: Option<Vec<ResponseItem>>,
-    emit_error_events: bool,
 ) -> CodexResult<()> {
     let result = if should_use_remote_compact_task(&turn_context.provider) {
         run_inline_remote_auto_compact_task(
@@ -4255,7 +4254,6 @@ async fn run_auto_compact(
             Arc::clone(turn_context),
             auto_compact_callsite,
             incoming_items,
-            emit_error_events,
         )
         .await
     } else {
@@ -4264,7 +4262,6 @@ async fn run_auto_compact(
             Arc::clone(turn_context),
             auto_compact_callsite,
             incoming_items,
-            emit_error_events,
         )
         .await
     };
@@ -4280,14 +4277,13 @@ async fn run_auto_compact(
             0,
             auto_compact_limit,
         ) {
-            let message = format!(
-                "auto-compaction succeeded but token usage is still above threshold (total_usage_tokens_after_compact={total_usage_tokens_after_compact}, auto_compact_limit={auto_compact_limit})"
+            error!(
+                turn_id = %turn_context.sub_id,
+                auto_compact_callsite = ?auto_compact_callsite,
+                total_usage_tokens_after_compact,
+                auto_compact_limit,
+                "auto compaction succeeded but token usage is still above threshold"
             );
-            if emit_error_events {
-                let event =
-                    EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
-                sess.send_event(turn_context, event).await;
-            }
             return Err(CodexErr::ContextWindowExceeded);
         }
     }

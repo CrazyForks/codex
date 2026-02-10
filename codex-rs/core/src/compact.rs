@@ -48,7 +48,6 @@ pub(crate) async fn run_inline_auto_compact_task(
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
     incoming_items: Option<Vec<ResponseItem>>,
-    emit_error_events: bool,
 ) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
@@ -63,7 +62,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         input,
         Some(auto_compact_callsite),
         incoming_items,
-        emit_error_events,
+        false,
     )
     .await?;
     Ok(())
