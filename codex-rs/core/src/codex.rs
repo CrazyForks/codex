@@ -3970,7 +3970,7 @@ pub(crate) async fn run_turn(
     }
 
     match pre_turn_compaction_outcome {
-        PreTurnCompactionOutcome::IncomingItemsIncluded => {
+        PreTurnCompactionOutcome::CompactedWithIncomingItems => {
             // Incoming turn items were already part of pre-turn compaction input, and the
             // user prompt is already in history after compaction. Emit lifecycle events only.
             sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
@@ -4163,7 +4163,7 @@ pub(crate) async fn run_turn(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreTurnCompactionOutcome {
     NotNeeded,
-    IncomingItemsIncluded,
+    CompactedWithIncomingItems,
     CompactedWithoutIncomingItems,
 }
 
@@ -4220,7 +4220,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     .await
     .is_ok()
     {
-        return Some(PreTurnCompactionOutcome::IncomingItemsIncluded);
+        return Some(PreTurnCompactionOutcome::CompactedWithIncomingItems);
     }
 
     // Fallback: compact from the end of the previous turn, then append current turn context
