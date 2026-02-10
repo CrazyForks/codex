@@ -62,7 +62,6 @@ pub(crate) async fn run_inline_auto_compact_task(
         input,
         Some(auto_compact_callsite),
         incoming_items,
-        false,
     )
     .await?;
     Ok(())
@@ -79,7 +78,14 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    run_compact_task_inner(sess.clone(), turn_context, input, None, None, true).await
+    if let Err(err) =
+        run_compact_task_inner(sess.clone(), turn_context.clone(), input, None, None).await
+    {
+        let event = EventMsg::Error(err.to_error_event(None));
+        sess.send_event(&turn_context, event).await;
+        return Err(err);
+    }
+    Ok(())
 }
 
 async fn run_compact_task_inner(
@@ -88,7 +94,6 @@ async fn run_compact_task_inner(
     input: Vec<UserInput>,
     auto_compact_callsite: Option<AutoCompactCallsite>,
     incoming_items: Option<Vec<ResponseItem>>,
-    emit_error_events: bool,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
@@ -186,10 +191,6 @@ async fn run_compact_task_inner(
                     continue;
                 }
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                if emit_error_events {
-                    let event = EventMsg::Error(e.to_error_event(None));
-                    sess.send_event(&turn_context, event).await;
-                }
                 return Err(e);
             }
             Err(e) => {
@@ -205,10 +206,6 @@ async fn run_compact_task_inner(
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {
-                    if emit_error_events {
-                        let event = EventMsg::Error(e.to_error_event(None));
-                        sess.send_event(&turn_context, event).await;
-                    }
                     return Err(e);
                 }
             }
