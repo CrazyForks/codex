@@ -4221,31 +4221,6 @@ async fn run_pre_turn_auto_compaction_if_needed(
     .await
     .is_ok()
     {
-        let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-        let estimated_tokens_without_incoming =
-            total_usage_tokens_after_compact.saturating_sub(incoming_items_tokens_estimate);
-        let over_limit_after_compaction = is_projected_submission_over_auto_compact_limit(
-            total_usage_tokens_after_compact,
-            0,
-            auto_compact_limit,
-        );
-        let over_limit_without_incoming = is_projected_submission_over_auto_compact_limit(
-            estimated_tokens_without_incoming,
-            0,
-            auto_compact_limit,
-        );
-        if over_limit_after_compaction && !over_limit_without_incoming {
-            send_pre_turn_too_large_error_event(
-                sess,
-                turn_context,
-                AutoCompactCallsite::PreTurn,
-                incoming_items_tokens_estimate,
-                auto_compact_limit,
-                "pre-turn compaction with incoming items still exceeds context window",
-            )
-            .await;
-            return None;
-        }
         return Some(PreTurnCompactionOutcome::IncomingItemsIncluded);
     }
 
