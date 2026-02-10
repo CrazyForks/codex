@@ -38,6 +38,7 @@ use crate::stream_events_utils::handle_output_item_done;
 use crate::stream_events_utils::last_assistant_message_from_item;
 use crate::terminal;
 use crate::truncate::TruncationPolicy;
+#[cfg(test)]
 use crate::truncate::approx_tokens_from_byte_count_i64;
 use crate::turn_metadata::build_turn_metadata_header;
 use crate::turn_metadata::resolve_turn_metadata_header_with_timeout;
@@ -125,7 +126,9 @@ use crate::config::types::McpServerConfig;
 use crate::config::types::ShellEnvironmentPolicy;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
+#[cfg(test)]
 use crate::context_manager::estimate_response_item_model_visible_bytes;
+use crate::context_manager::estimate_response_items_token_count;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -4166,14 +4169,6 @@ enum PreTurnCompactionOutcome {
     NotNeeded,
     IncomingItemsIncluded,
     CompactedWithoutIncomingItems,
-}
-
-fn estimate_response_items_token_count(items: &[ResponseItem]) -> i64 {
-    let model_visible_bytes = items
-        .iter()
-        .map(estimate_response_item_model_visible_bytes)
-        .fold(0_i64, i64::saturating_add);
-    approx_tokens_from_byte_count_i64(model_visible_bytes)
 }
 
 async fn send_pre_turn_too_large_error_event(

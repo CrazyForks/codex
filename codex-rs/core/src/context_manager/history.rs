@@ -400,6 +400,14 @@ fn estimate_item_token_count(item: &ResponseItem) -> i64 {
     approx_tokens_from_byte_count_i64(model_visible_bytes)
 }
 
+pub(crate) fn estimate_response_items_token_count(items: &[ResponseItem]) -> i64 {
+    let model_visible_bytes = items
+        .iter()
+        .map(estimate_response_item_model_visible_bytes)
+        .fold(0_i64, i64::saturating_add);
+    approx_tokens_from_byte_count_i64(model_visible_bytes)
+}
+
 pub(crate) fn estimate_response_item_model_visible_bytes(item: &ResponseItem) -> i64 {
     match item {
         ResponseItem::GhostSnapshot { .. } => 0,
