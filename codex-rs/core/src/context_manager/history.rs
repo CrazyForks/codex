@@ -396,8 +396,7 @@ fn estimate_reasoning_length(encoded_len: usize) -> usize {
 }
 
 fn estimate_item_token_count(item: &ResponseItem) -> i64 {
-    let model_visible_bytes = estimate_response_item_model_visible_bytes(item);
-    approx_tokens_from_byte_count_i64(model_visible_bytes)
+    estimate_response_items_token_count(std::slice::from_ref(item))
 }
 
 pub(crate) fn estimate_response_items_token_count(items: &[ResponseItem]) -> i64 {

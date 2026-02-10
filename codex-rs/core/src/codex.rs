@@ -38,8 +38,6 @@ use crate::stream_events_utils::handle_output_item_done;
 use crate::stream_events_utils::last_assistant_message_from_item;
 use crate::terminal;
 use crate::truncate::TruncationPolicy;
-#[cfg(test)]
-use crate::truncate::approx_tokens_from_byte_count_i64;
 use crate::turn_metadata::build_turn_metadata_header;
 use crate::turn_metadata::resolve_turn_metadata_header_with_timeout;
 use crate::util::error_or_panic;
@@ -126,8 +124,6 @@ use crate::config::types::McpServerConfig;
 use crate::config::types::ShellEnvironmentPolicy;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
-#[cfg(test)]
-use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::estimate_response_items_token_count;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
@@ -5439,8 +5435,8 @@ mod tests {
         }];
         let response_input_item = ResponseInputItem::from(input);
         let response_item: ResponseItem = response_input_item.into();
-        let model_visible_bytes = estimate_response_item_model_visible_bytes(&response_item);
-        let estimated_tokens = approx_tokens_from_byte_count_i64(model_visible_bytes);
+        let estimated_tokens =
+            estimate_response_items_token_count(std::slice::from_ref(&response_item));
         assert!(estimated_tokens > 0);
     }
 
@@ -5476,12 +5472,10 @@ mod tests {
         let long_response_input_item = ResponseInputItem::from(long);
         let short_response_item: ResponseItem = short_response_input_item.into();
         let long_response_item: ResponseItem = long_response_input_item.into();
-        let short_tokens = approx_tokens_from_byte_count_i64(
-            estimate_response_item_model_visible_bytes(&short_response_item),
-        );
-        let long_tokens = approx_tokens_from_byte_count_i64(
-            estimate_response_item_model_visible_bytes(&long_response_item),
-        );
+        let short_tokens =
+            estimate_response_items_token_count(std::slice::from_ref(&short_response_item));
+        let long_tokens =
+            estimate_response_items_token_count(std::slice::from_ref(&long_response_item));
         assert_eq!(short_tokens, long_tokens);
     }
 
