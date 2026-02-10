@@ -287,6 +287,7 @@ async fn replayed_user_message_preserves_remote_image_urls() {
             text_elements: Vec::new(),
             local_images: Vec::new(),
         })]),
+        network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
     };
 
@@ -342,6 +343,7 @@ async fn replayed_user_message_with_only_remote_images_renders_history_cell() {
             text_elements: Vec::new(),
             local_images: Vec::new(),
         })]),
+        network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
     };
 
@@ -531,6 +533,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
         history_log_id: 0,
         history_entry_count: 0,
         initial_messages: None,
+        network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
     };
     chat.handle_codex_event(Event {
@@ -623,6 +626,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
         history_log_id: 0,
         history_entry_count: 0,
         initial_messages: None,
+        network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
     };
     chat.handle_codex_event(Event {
