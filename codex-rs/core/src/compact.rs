@@ -311,7 +311,7 @@ pub(crate) fn process_compacted_history(
     compacted_history.retain(should_keep_compacted_history_item);
     move_summary_user_messages_to_end(&mut compacted_history);
 
-    let insertion_index = find_initial_context_insertion_index(&compacted_history);
+    let insertion_index = find_turn_context_insertion_index(&compacted_history);
     compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
 
     compacted_history
@@ -331,7 +331,7 @@ fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) 
     *compacted_history = kept;
 }
 
-fn find_initial_context_insertion_index(compacted_history: &[ResponseItem]) -> usize {
+fn find_turn_context_insertion_index(compacted_history: &[ResponseItem]) -> usize {
     if let Some(last_real_user_index) = compacted_history.iter().rposition(is_real_user_message) {
         return last_real_user_index;
     }
