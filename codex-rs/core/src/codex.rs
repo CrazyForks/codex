@@ -4260,11 +4260,8 @@ async fn run_auto_compact(
             .auto_compact_token_limit()
             .unwrap_or(i64::MAX);
         let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-        if is_projected_submission_over_auto_compact_limit(
-            total_usage_tokens_after_compact,
-            0,
-            auto_compact_limit,
-        ) {
+        if auto_compact_limit != i64::MAX && total_usage_tokens_after_compact >= auto_compact_limit
+        {
             error!(
                 turn_id = %turn_context.sub_id,
                 auto_compact_callsite = ?auto_compact_callsite,
