@@ -4227,34 +4227,6 @@ async fn run_pre_turn_auto_compaction_if_needed(
         return None;
     }
 
-    let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-    let over_limit_with_incoming = is_projected_submission_over_auto_compact_limit(
-        total_usage_tokens_after_compact,
-        incoming_items_tokens_estimate,
-        auto_compact_limit,
-    );
-    let over_limit_without_incoming = is_projected_submission_over_auto_compact_limit(
-        total_usage_tokens_after_compact,
-        0,
-        auto_compact_limit,
-    );
-    if over_limit_with_incoming && !over_limit_without_incoming {
-        error!(
-            turn_id = %turn_context.sub_id,
-            auto_compact_callsite = ?AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
-            incoming_items_tokens_estimate,
-            auto_compact_limit,
-            reason = "incoming user/context still exceeds context window after fallback compaction",
-            "incoming user/context is too large for pre-turn auto-compaction flow"
-        );
-        let message = format!(
-            "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
-        );
-        let event = EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
-        sess.send_event(turn_context, event).await;
-        return None;
-    }
-
     Some(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
 }
 
@@ -4296,6 +4268,29 @@ async fn run_auto_compact(
         )
         .await
     };
+
+    if result.is_ok() {
+        let auto_compact_limit = turn_context
+            .model_info
+            .auto_compact_token_limit()
+            .unwrap_or(i64::MAX);
+        let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
+        if is_projected_submission_over_auto_compact_limit(
+            total_usage_tokens_after_compact,
+            0,
+            auto_compact_limit,
+        ) {
+            let message = format!(
+                "auto-compaction succeeded but token usage is still above threshold (total_usage_tokens_after_compact={total_usage_tokens_after_compact}, auto_compact_limit={auto_compact_limit})"
+            );
+            if emit_error_events {
+                let event =
+                    EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
+                sess.send_event(turn_context, event).await;
+            }
+            return Err(CodexErr::ContextWindowExceeded);
+        }
+    }
 
     if let Err(err) = &result {
         error!(
