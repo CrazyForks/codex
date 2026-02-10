@@ -124,7 +124,7 @@ use crate::config::types::McpServerConfig;
 use crate::config::types::ShellEnvironmentPolicy;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
-use crate::context_manager::estimate_response_items_token_count;
+use crate::context_manager::estimate_item_token_count;
 use crate::environment_context::EnvironmentContext;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
@@ -4198,7 +4198,10 @@ async fn run_pre_turn_auto_compaction_if_needed(
     incoming_turn_items: &[ResponseItem],
 ) -> Option<PreTurnCompactionOutcome> {
     let total_usage_tokens = sess.get_total_token_usage().await;
-    let incoming_items_tokens_estimate = estimate_response_items_token_count(incoming_turn_items);
+    let incoming_items_tokens_estimate = incoming_turn_items
+        .iter()
+        .map(estimate_item_token_count)
+        .fold(0_i64, i64::saturating_add);
     if !is_projected_submission_over_auto_compact_limit(
         total_usage_tokens,
         incoming_items_tokens_estimate,
@@ -5435,8 +5438,7 @@ mod tests {
         }];
         let response_input_item = ResponseInputItem::from(input);
         let response_item: ResponseItem = response_input_item.into();
-        let estimated_tokens =
-            estimate_response_items_token_count(std::slice::from_ref(&response_item));
+        let estimated_tokens = estimate_item_token_count(&response_item);
         assert!(estimated_tokens > 0);
     }
 
@@ -5472,10 +5474,8 @@ mod tests {
         let long_response_input_item = ResponseInputItem::from(long);
         let short_response_item: ResponseItem = short_response_input_item.into();
         let long_response_item: ResponseItem = long_response_input_item.into();
-        let short_tokens =
-            estimate_response_items_token_count(std::slice::from_ref(&short_response_item));
-        let long_tokens =
-            estimate_response_items_token_count(std::slice::from_ref(&long_response_item));
+        let short_tokens = estimate_item_token_count(&short_response_item);
+        let long_tokens = estimate_item_token_count(&long_response_item);
         assert_eq!(short_tokens, long_tokens);
     }
 

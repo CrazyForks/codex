@@ -395,15 +395,8 @@ fn estimate_reasoning_length(encoded_len: usize) -> usize {
         .saturating_sub(650)
 }
 
-fn estimate_item_token_count(item: &ResponseItem) -> i64 {
-    estimate_response_items_token_count(std::slice::from_ref(item))
-}
-
-pub(crate) fn estimate_response_items_token_count(items: &[ResponseItem]) -> i64 {
-    let model_visible_bytes = items
-        .iter()
-        .map(estimate_response_item_model_visible_bytes)
-        .fold(0_i64, i64::saturating_add);
+pub(crate) fn estimate_item_token_count(item: &ResponseItem) -> i64 {
+    let model_visible_bytes = estimate_response_item_model_visible_bytes(item);
     approx_tokens_from_byte_count_i64(model_visible_bytes)
 }
 
