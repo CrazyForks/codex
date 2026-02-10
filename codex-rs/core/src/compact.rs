@@ -35,6 +35,7 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AutoCompactCallsite {
     PreTurn,
+    PreTurnFallbackWithoutIncoming,
     MidTurnContinuation,
 }
 
@@ -46,7 +47,8 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
+    emit_error_events: bool,
 ) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
@@ -60,7 +62,8 @@ pub(crate) async fn run_inline_auto_compact_task(
         turn_context,
         input,
         Some(auto_compact_callsite),
-        incoming_user_message,
+        incoming_items,
+        emit_error_events,
     )
     .await?;
     Ok(())
@@ -77,7 +80,7 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    run_compact_task_inner(sess.clone(), turn_context, input, None, None).await
+    run_compact_task_inner(sess.clone(), turn_context, input, None, None, true).await
 }
 
 async fn run_compact_task_inner(
@@ -85,7 +88,8 @@ async fn run_compact_task_inner(
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
     auto_compact_callsite: Option<AutoCompactCallsite>,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
+    emit_error_events: bool,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
@@ -93,11 +97,8 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
-    if let Some(incoming_user_message) = incoming_user_message.as_ref() {
-        history.record_items(
-            std::slice::from_ref(incoming_user_message),
-            turn_context.truncation_policy,
-        );
+    if let Some(incoming_items) = incoming_items.as_ref() {
+        history.record_items(incoming_items.iter(), turn_context.truncation_policy);
     }
     history.record_items(
         &[initial_input_for_turn.into()],
@@ -186,8 +187,10 @@ async fn run_compact_task_inner(
                     continue;
                 }
                 sess.set_total_tokens_full(turn_context.as_ref()).await;
-                let event = EventMsg::Error(e.to_error_event(None));
-                sess.send_event(&turn_context, event).await;
+                if emit_error_events {
+                    let event = EventMsg::Error(e.to_error_event(None));
+                    sess.send_event(&turn_context, event).await;
+                }
                 return Err(e);
             }
             Err(e) => {
@@ -203,8 +206,10 @@ async fn run_compact_task_inner(
                     tokio::time::sleep(delay).await;
                     continue;
                 } else {
-                    let event = EventMsg::Error(e.to_error_event(None));
-                    sess.send_event(&turn_context, event).await;
+                    if emit_error_events {
+                        let event = EventMsg::Error(e.to_error_event(None));
+                        sess.send_event(&turn_context, event).await;
+                    }
                     return Err(e);
                 }
             }
@@ -216,11 +221,12 @@ async fn run_compact_task_inner(
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
     let mut user_messages = collect_user_messages(history_items);
-    if let Some(incoming_user_message) = incoming_user_message
-        .as_ref()
-        .and_then(real_user_message_text)
-    {
-        user_messages.push(incoming_user_message);
+    if let Some(incoming_items) = incoming_items.as_ref() {
+        for incoming_item in incoming_items {
+            if let Some(incoming_user_message) = real_user_message_text(incoming_item) {
+                user_messages.push(incoming_user_message);
+            }
+        }
     }
 
     let initial_context = sess.build_initial_context(turn_context.as_ref()).await;

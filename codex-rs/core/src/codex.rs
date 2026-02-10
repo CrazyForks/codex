@@ -3138,14 +3138,14 @@ mod handlers {
                 resumed_model.as_deref(),
                 &current_context,
             );
-            if !update_items.is_empty() {
-                sess.record_conversation_items(&current_context, &update_items)
-                    .await;
-            }
 
             sess.refresh_mcp_servers_if_requested(&current_context)
                 .await;
-            let regular_task = sess.take_startup_regular_task().await.unwrap_or_default();
+            let regular_task = sess
+                .take_startup_regular_task()
+                .await
+                .unwrap_or_default()
+                .with_pre_turn_context_items(update_items);
             sess.spawn_task(Arc::clone(&current_context), items, regular_task)
                 .await;
             *previous_context = Some(current_context);
@@ -3872,6 +3872,7 @@ pub(crate) async fn run_turn(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
+    pre_turn_context_items: Vec<ResponseItem>,
     prewarmed_client_session: Option<ModelClientSession>,
     cancellation_token: CancellationToken,
 ) -> Option<String> {
@@ -3881,13 +3882,9 @@ pub(crate) async fn run_turn(
 
     let model_info = turn_context.model_info.clone();
     let auto_compact_limit = model_info.auto_compact_token_limit().unwrap_or(i64::MAX);
-    let total_usage_tokens = sess.get_total_token_usage().await;
     let response_item: ResponseItem = ResponseInputItem::from(input.clone()).into();
-    let incoming_user_tokens_estimate = {
-        let model_visible_bytes = estimate_response_item_model_visible_bytes(&response_item);
-        approx_tokens_from_byte_count_i64(model_visible_bytes)
-    };
-    let mut user_message_included_via_pre_turn_compaction = false;
+    let mut incoming_turn_items = pre_turn_context_items.clone();
+    incoming_turn_items.push(response_item.clone());
 
     let event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
@@ -3895,56 +3892,13 @@ pub(crate) async fn run_turn(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, event).await;
-    if is_projected_submission_over_auto_compact_limit(
-        total_usage_tokens,
-        incoming_user_tokens_estimate,
+    let pre_turn_compaction_outcome = run_pre_turn_auto_compaction_if_needed(
+        &sess,
+        &turn_context,
         auto_compact_limit,
-    ) {
-        if run_auto_compact(
-            &sess,
-            &turn_context,
-            AutoCompactCallsite::PreTurn,
-            Some(response_item.clone()),
-        )
-        .await
-        .is_err()
-        {
-            return None;
-        }
-        user_message_included_via_pre_turn_compaction = true;
-
-        let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-        let estimated_tokens_without_incoming_user =
-            total_usage_tokens_after_compact.saturating_sub(incoming_user_tokens_estimate);
-        let over_limit_after_compaction = is_projected_submission_over_auto_compact_limit(
-            total_usage_tokens_after_compact,
-            0,
-            auto_compact_limit,
-        );
-        let over_limit_without_incoming_user = is_projected_submission_over_auto_compact_limit(
-            estimated_tokens_without_incoming_user,
-            0,
-            auto_compact_limit,
-        );
-        if over_limit_after_compaction && !over_limit_without_incoming_user {
-            error!(
-                turn_id = %turn_context.sub_id,
-                auto_compact_callsite = ?AutoCompactCallsite::PreTurn,
-                total_usage_tokens_after_compact,
-                estimated_tokens_without_incoming_user,
-                incoming_user_tokens_estimate,
-                auto_compact_limit,
-                "incoming user message is likely too large to fit after auto-compaction"
-            );
-            let message = format!(
-                "Incoming user message is likely too large to fit after auto-compaction (incoming_user_tokens_estimate={incoming_user_tokens_estimate})."
-            );
-            let event =
-                EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
-            sess.send_event(&turn_context, event).await;
-            return None;
-        }
-    }
+        &incoming_turn_items,
+    )
+    .await?;
 
     let skills_outcome = Some(
         sess.services
@@ -4016,7 +3970,11 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    if user_message_included_via_pre_turn_compaction {
+    if !pre_turn_context_items.is_empty() {
+        sess.record_conversation_items(&turn_context, &pre_turn_context_items)
+            .await;
+    }
+    if pre_turn_compaction_outcome == PreTurnCompactionOutcome::IncomingItemsIncluded {
         sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
             .await;
     } else {
@@ -4129,6 +4087,7 @@ pub(crate) async fn run_turn(
                         &turn_context,
                         AutoCompactCallsite::MidTurnContinuation,
                         None,
+                        true,
                     )
                     .await
                     .is_err()
@@ -4192,6 +4151,150 @@ pub(crate) async fn run_turn(
     last_agent_message
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreTurnCompactionOutcome {
+    NotNeeded,
+    IncomingItemsIncluded,
+    CompactedWithoutIncomingItems,
+}
+
+fn estimate_response_items_token_count(items: &[ResponseItem]) -> i64 {
+    let model_visible_bytes = items
+        .iter()
+        .map(estimate_response_item_model_visible_bytes)
+        .fold(0_i64, i64::saturating_add);
+    approx_tokens_from_byte_count_i64(model_visible_bytes)
+}
+
+async fn send_pre_turn_too_large_error_event(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    auto_compact_callsite: AutoCompactCallsite,
+    incoming_items_tokens_estimate: i64,
+    auto_compact_limit: i64,
+    reason: &str,
+) {
+    error!(
+        turn_id = %turn_context.sub_id,
+        auto_compact_callsite = ?auto_compact_callsite,
+        incoming_items_tokens_estimate,
+        auto_compact_limit,
+        reason,
+        "incoming user/context is too large for pre-turn auto-compaction flow"
+    );
+
+    let message = format!(
+        "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
+    );
+    let event = EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
+    sess.send_event(turn_context, event).await;
+}
+
+async fn run_pre_turn_auto_compaction_if_needed(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    auto_compact_limit: i64,
+    incoming_turn_items: &[ResponseItem],
+) -> Option<PreTurnCompactionOutcome> {
+    let total_usage_tokens = sess.get_total_token_usage().await;
+    let incoming_items_tokens_estimate = estimate_response_items_token_count(incoming_turn_items);
+    if !is_projected_submission_over_auto_compact_limit(
+        total_usage_tokens,
+        incoming_items_tokens_estimate,
+        auto_compact_limit,
+    ) {
+        return Some(PreTurnCompactionOutcome::NotNeeded);
+    }
+
+    if run_auto_compact(
+        sess,
+        turn_context,
+        AutoCompactCallsite::PreTurn,
+        Some(incoming_turn_items.to_vec()),
+        false,
+    )
+    .await
+    .is_ok()
+    {
+        let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
+        let estimated_tokens_without_incoming =
+            total_usage_tokens_after_compact.saturating_sub(incoming_items_tokens_estimate);
+        let over_limit_after_compaction = is_projected_submission_over_auto_compact_limit(
+            total_usage_tokens_after_compact,
+            0,
+            auto_compact_limit,
+        );
+        let over_limit_without_incoming = is_projected_submission_over_auto_compact_limit(
+            estimated_tokens_without_incoming,
+            0,
+            auto_compact_limit,
+        );
+        if over_limit_after_compaction && !over_limit_without_incoming {
+            send_pre_turn_too_large_error_event(
+                sess,
+                turn_context,
+                AutoCompactCallsite::PreTurn,
+                incoming_items_tokens_estimate,
+                auto_compact_limit,
+                "pre-turn compaction with incoming items still exceeds context window",
+            )
+            .await;
+            return None;
+        }
+        return Some(PreTurnCompactionOutcome::IncomingItemsIncluded);
+    }
+
+    // Fallback: compact from the end of the previous turn, then append current turn context
+    // and user input in `run_turn`.
+    if run_auto_compact(
+        sess,
+        turn_context,
+        AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+        None,
+        false,
+    )
+    .await
+    .is_err()
+    {
+        send_pre_turn_too_large_error_event(
+            sess,
+            turn_context,
+            AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+            incoming_items_tokens_estimate,
+            auto_compact_limit,
+            "pre-turn fallback compaction without incoming items failed",
+        )
+        .await;
+        return None;
+    }
+
+    let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
+    let over_limit_with_incoming = is_projected_submission_over_auto_compact_limit(
+        total_usage_tokens_after_compact,
+        incoming_items_tokens_estimate,
+        auto_compact_limit,
+    );
+    let over_limit_without_incoming = is_projected_submission_over_auto_compact_limit(
+        total_usage_tokens_after_compact,
+        0,
+        auto_compact_limit,
+    );
+    if over_limit_with_incoming && !over_limit_without_incoming {
+        send_pre_turn_too_large_error_event(
+            sess,
+            turn_context,
+            AutoCompactCallsite::PreTurnFallbackWithoutIncoming,
+            incoming_items_tokens_estimate,
+            auto_compact_limit,
+            "incoming user/context still exceeds context window after fallback compaction",
+        )
+        .await;
+        return None;
+    }
+
+    Some(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
+}
+
 fn is_projected_submission_over_auto_compact_limit(
     total_usage_tokens: i64,
     incoming_user_tokens_estimate: i64,
@@ -4208,14 +4311,16 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
+    emit_error_events: bool,
 ) -> CodexResult<()> {
     let result = if should_use_remote_compact_task(&turn_context.provider) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
-            incoming_user_message,
+            incoming_items,
+            emit_error_events,
         )
         .await
     } else {
@@ -4223,7 +4328,8 @@ async fn run_auto_compact(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
-            incoming_user_message,
+            incoming_items,
+            emit_error_events,
         )
         .await
     };

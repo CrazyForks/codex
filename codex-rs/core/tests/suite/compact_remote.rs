@@ -502,7 +502,12 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
     )
     .await;
 
-    let compact_mock = responses::mount_compact_json_once(
+    let first_compact_mock = responses::mount_compact_json_once(
+        harness.server(),
+        serde_json::json!({ "output": "invalid compact payload shape" }),
+    )
+    .await;
+    let second_compact_mock = responses::mount_compact_json_once(
         harness.server(),
         serde_json::json!({ "output": "invalid compact payload shape" }),
     )
@@ -545,13 +550,18 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     assert!(
-        error_message.contains("Error running remote compact task"),
+        error_message.contains("Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction"),
         "expected compact failure error, got {error_message}"
     );
     assert_eq!(
-        compact_mock.requests().len(),
+        first_compact_mock.requests().len(),
         1,
-        "expected exactly one remote compact attempt"
+        "expected first remote compact attempt with incoming items"
+    );
+    assert_eq!(
+        second_compact_mock.requests().len(),
+        1,
+        "expected second remote compact attempt without incoming items"
     );
     assert!(
         post_compact_turn_mock.requests().is_empty(),

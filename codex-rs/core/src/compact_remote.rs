@@ -26,13 +26,15 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
+    emit_error_events: bool,
 ) -> CodexResult<()> {
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
         auto_compact_callsite,
-        incoming_user_message,
+        incoming_items,
+        emit_error_events,
     )
     .await?;
     Ok(())
@@ -49,27 +51,37 @@ pub(crate) async fn run_remote_compact_task(
     });
     sess.send_event(&turn_context, start_event).await;
 
-    run_remote_compact_task_inner(&sess, &turn_context, AutoCompactCallsite::PreTurn, None).await
+    run_remote_compact_task_inner(
+        &sess,
+        &turn_context,
+        AutoCompactCallsite::PreTurn,
+        None,
+        true,
+    )
+    .await
 }
 
 async fn run_remote_compact_task_inner(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
+    emit_error_events: bool,
 ) -> CodexResult<()> {
     if let Err(err) = run_remote_compact_task_inner_impl(
         sess,
         turn_context,
         auto_compact_callsite,
-        incoming_user_message,
+        incoming_items,
     )
     .await
     {
-        let event = EventMsg::Error(
-            err.to_error_event(Some("Error running remote compact task".to_string())),
-        );
-        sess.send_event(turn_context, event).await;
+        if emit_error_events {
+            let event = EventMsg::Error(
+                err.to_error_event(Some("Error running remote compact task".to_string())),
+            );
+            sess.send_event(turn_context, event).await;
+        }
         return Err(err);
     }
     Ok(())
@@ -79,7 +91,7 @@ async fn run_remote_compact_task_inner_impl(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    incoming_user_message: Option<ResponseItem>,
+    incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(turn_context, &compaction_item)
@@ -91,8 +103,8 @@ async fn run_remote_compact_task_inner_impl(
         turn_context.as_ref(),
         &base_instructions,
     );
-    if let Some(incoming_user_message) = incoming_user_message {
-        history.record_items(&[incoming_user_message], turn_context.truncation_policy);
+    if let Some(incoming_items) = incoming_items {
+        history.record_items(incoming_items.iter(), turn_context.truncation_policy);
     }
     if deleted_items > 0 {
         info!(
