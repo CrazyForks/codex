@@ -2505,6 +2505,17 @@ impl Session {
         self.ensure_rollout_materialized().await;
     }
 
+    pub(crate) async fn emit_user_prompt_turn_item(
+        &self,
+        turn_context: &TurnContext,
+        input: &[UserInput],
+    ) {
+        let turn_item = TurnItem::UserMessage(UserMessageItem::new(input));
+        self.emit_turn_item_started(turn_context, &turn_item).await;
+        self.emit_turn_item_completed(turn_context, turn_item).await;
+        self.ensure_rollout_materialized().await;
+    }
+
     pub(crate) async fn notify_background_event(
         &self,
         turn_context: &TurnContext,
@@ -3876,6 +3887,7 @@ pub(crate) async fn run_turn(
         let model_visible_bytes = estimate_response_item_model_visible_bytes(&response_item);
         approx_tokens_from_byte_count_i64(model_visible_bytes)
     };
+    let mut user_message_included_via_pre_turn_compaction = false;
 
     let event = EventMsg::TurnStarted(TurnStartedEvent {
         turn_id: turn_context.sub_id.clone(),
@@ -3888,23 +3900,38 @@ pub(crate) async fn run_turn(
         incoming_user_tokens_estimate,
         auto_compact_limit,
     ) {
-        if run_auto_compact(&sess, &turn_context, AutoCompactCallsite::PreTurn)
-            .await
-            .is_err()
+        if run_auto_compact(
+            &sess,
+            &turn_context,
+            AutoCompactCallsite::PreTurn,
+            Some(response_item.clone()),
+        )
+        .await
+        .is_err()
         {
             return None;
         }
+        user_message_included_via_pre_turn_compaction = true;
 
         let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-        if is_projected_submission_over_auto_compact_limit(
+        let estimated_tokens_without_incoming_user =
+            total_usage_tokens_after_compact.saturating_sub(incoming_user_tokens_estimate);
+        let over_limit_after_compaction = is_projected_submission_over_auto_compact_limit(
             total_usage_tokens_after_compact,
-            incoming_user_tokens_estimate,
+            0,
             auto_compact_limit,
-        ) {
+        );
+        let over_limit_without_incoming_user = is_projected_submission_over_auto_compact_limit(
+            estimated_tokens_without_incoming_user,
+            0,
+            auto_compact_limit,
+        );
+        if over_limit_after_compaction && !over_limit_without_incoming_user {
             error!(
                 turn_id = %turn_context.sub_id,
                 auto_compact_callsite = ?AutoCompactCallsite::PreTurn,
                 total_usage_tokens_after_compact,
+                estimated_tokens_without_incoming_user,
                 incoming_user_tokens_estimate,
                 auto_compact_limit,
                 "incoming user message is likely too large to fit after auto-compaction"
@@ -3989,8 +4016,13 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
-        .await;
+    if user_message_included_via_pre_turn_compaction {
+        sess.emit_user_prompt_turn_item(turn_context.as_ref(), &input)
+            .await;
+    } else {
+        sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), &input, response_item)
+            .await;
+    }
 
     if !skill_items.is_empty() {
         sess.record_conversation_items(&turn_context, &skill_items)
@@ -4096,6 +4128,7 @@ pub(crate) async fn run_turn(
                         &sess,
                         &turn_context,
                         AutoCompactCallsite::MidTurnContinuation,
+                        None,
                     )
                     .await
                     .is_err()
@@ -4175,12 +4208,14 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    incoming_user_message: Option<ResponseItem>,
 ) -> CodexResult<()> {
     let result = if should_use_remote_compact_task(&turn_context.provider) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
+            incoming_user_message,
         )
         .await
     } else {
@@ -4188,6 +4223,7 @@ async fn run_auto_compact(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
+            incoming_user_message,
         )
         .await
     };

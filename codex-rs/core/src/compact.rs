@@ -46,6 +46,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    incoming_user_message: Option<ResponseItem>,
 ) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
     let input = vec![UserInput::Text {
@@ -54,7 +55,14 @@ pub(crate) async fn run_inline_auto_compact_task(
         text_elements: Vec::new(),
     }];
 
-    run_compact_task_inner(sess, turn_context, input, Some(auto_compact_callsite)).await?;
+    run_compact_task_inner(
+        sess,
+        turn_context,
+        input,
+        Some(auto_compact_callsite),
+        incoming_user_message,
+    )
+    .await?;
     Ok(())
 }
 
@@ -69,7 +77,7 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    run_compact_task_inner(sess.clone(), turn_context, input, None).await
+    run_compact_task_inner(sess.clone(), turn_context, input, None, None).await
 }
 
 async fn run_compact_task_inner(
@@ -77,6 +85,7 @@ async fn run_compact_task_inner(
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
     auto_compact_callsite: Option<AutoCompactCallsite>,
+    incoming_user_message: Option<ResponseItem>,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
@@ -84,6 +93,12 @@ async fn run_compact_task_inner(
     let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
 
     let mut history = sess.clone_history().await;
+    if let Some(incoming_user_message) = incoming_user_message.as_ref() {
+        history.record_items(
+            std::slice::from_ref(incoming_user_message),
+            turn_context.truncation_policy,
+        );
+    }
     history.record_items(
         &[initial_input_for_turn.into()],
         turn_context.truncation_policy,
@@ -200,7 +215,13 @@ async fn run_compact_task_inner(
     let history_items = history_snapshot.raw_items();
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let user_messages = collect_user_messages(history_items);
+    let mut user_messages = collect_user_messages(history_items);
+    if let Some(incoming_user_message) = incoming_user_message
+        .as_ref()
+        .and_then(real_user_message_text)
+    {
+        user_messages.push(incoming_user_message);
+    }
 
     let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
     let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
@@ -270,58 +291,59 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 pub(crate) fn process_compacted_history(
     mut compacted_history: Vec<ResponseItem>,
     initial_context: &[ResponseItem],
-    auto_compact_callsite: AutoCompactCallsite,
+    _auto_compact_callsite: AutoCompactCallsite,
 ) -> Vec<ResponseItem> {
     compacted_history.retain(should_keep_compacted_history_item);
+    move_summary_user_messages_to_end(&mut compacted_history);
 
-    let initial_context = initial_context.to_vec();
-
-    match auto_compact_callsite {
-        // Pre-turn compaction runs before we record the incoming user message.
-        // Appending canonical context keeps it directly above that next user
-        // message instead of re-anchoring it to older compacted turns.
-        AutoCompactCallsite::PreTurn => {
-            compacted_history.extend(initial_context);
-        }
-        // Mid-turn continuation compaction runs after the user message has
-        // already been recorded. Keep canonical context directly above that
-        // "orphan" user message so continuation sampling sees fresh context.
-        AutoCompactCallsite::MidTurnContinuation => {
-            if let Some(anchor_index) = find_mid_turn_continuation_anchor(&compacted_history) {
-                compacted_history.splice(anchor_index..anchor_index, initial_context);
-            } else {
-                compacted_history.extend(initial_context);
-            }
-        }
-    }
+    let insertion_index = find_initial_context_insertion_index(&compacted_history);
+    compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
 
     compacted_history
 }
 
-fn find_mid_turn_continuation_anchor(compacted_history: &[ResponseItem]) -> Option<usize> {
-    if let Some(last_summary_index) = compacted_history.iter().rposition(is_summary_user_message) {
-        return compacted_history
-            .iter()
-            .enumerate()
-            .skip(last_summary_index.saturating_add(1))
-            .find_map(|(index, item)| is_real_user_message(item).then_some(index));
+fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) {
+    let mut kept = Vec::with_capacity(compacted_history.len());
+    let mut summaries = Vec::new();
+    for item in compacted_history.drain(..) {
+        if is_summary_user_message(&item) {
+            summaries.push(item);
+        } else {
+            kept.push(item);
+        }
     }
+    kept.extend(summaries);
+    *compacted_history = kept;
+}
 
-    let last_index = compacted_history.len().checked_sub(1)?;
-    is_real_user_message(&compacted_history[last_index]).then_some(last_index)
+fn find_initial_context_insertion_index(compacted_history: &[ResponseItem]) -> usize {
+    if let Some(last_real_user_index) = compacted_history.iter().rposition(is_real_user_message) {
+        return last_real_user_index;
+    }
+    if let Some(first_summary_index) = compacted_history.iter().position(is_summary_user_message) {
+        return first_summary_index;
+    }
+    compacted_history.len()
 }
 
 fn is_real_user_message(item: &ResponseItem) -> bool {
-    match crate::event_mapping::parse_turn_item(item) {
-        Some(TurnItem::UserMessage(user_message)) => !is_summary_message(&user_message.message()),
-        _ => false,
-    }
+    real_user_message_text(item).is_some()
 }
 
 fn is_summary_user_message(item: &ResponseItem) -> bool {
     match crate::event_mapping::parse_turn_item(item) {
         Some(TurnItem::UserMessage(user_message)) => is_summary_message(&user_message.message()),
         _ => false,
+    }
+}
+
+fn real_user_message_text(item: &ResponseItem) -> Option<String> {
+    match crate::event_mapping::parse_turn_item(item) {
+        Some(TurnItem::UserMessage(user_message)) => {
+            let message = user_message.message();
+            (!is_summary_message(&message)).then_some(message)
+        }
+        _ => None,
     }
 }
 
@@ -708,15 +730,6 @@ do things
         let expected = vec![
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "summary".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "fresh permissions".to_string(),
@@ -742,6 +755,15 @@ do things
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "fresh personality".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "summary".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
@@ -821,15 +843,6 @@ keep me updated
         let expected = vec![
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "summary".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "fresh permissions".to_string(),
@@ -873,6 +886,15 @@ keep me updated
   <reason>interrupted</reason>
 </turn_aborted>"#
                         .to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "summary".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
@@ -961,18 +983,18 @@ keep me updated
         let expected = vec![
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
+                role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
-                    text: "summary".to_string(),
+                    text: "fresh developer instructions".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
             },
             ResponseItem::Message {
                 id: None,
-                role: "developer".to_string(),
+                role: "user".to_string(),
                 content: vec![ContentItem::InputText {
-                    text: "fresh developer instructions".to_string(),
+                    text: "summary".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
@@ -1039,15 +1061,6 @@ keep me updated
             },
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: format!("{SUMMARY_PREFIX}\nsummary text"),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "fresh permissions".to_string(),
@@ -1064,12 +1077,21 @@ keep me updated
                 end_turn: None,
                 phase: None,
             },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nsummary text"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
         ];
         assert_eq!(refreshed, expected);
     }
 
     #[test]
-    fn process_compacted_history_pre_turn_appends_context_after_summary() {
+    fn process_compacted_history_pre_turn_places_summary_last() {
         let compacted_history = vec![
             ResponseItem::Message {
                 id: None,
@@ -1108,6 +1130,15 @@ keep me updated
         let expected = vec![
             ResponseItem::Message {
                 id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "fresh permissions".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "older user".to_string(),
@@ -1124,21 +1155,12 @@ keep me updated
                 end_turn: None,
                 phase: None,
             },
-            ResponseItem::Message {
-                id: None,
-                role: "developer".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "fresh permissions".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
         ];
         assert_eq!(refreshed, expected);
     }
 
     #[test]
-    fn process_compacted_history_mid_turn_without_orphan_user_appends_context() {
+    fn process_compacted_history_mid_turn_without_orphan_user_places_summary_last() {
         let compacted_history = vec![
             ResponseItem::Message {
                 id: None,
@@ -1177,6 +1199,15 @@ keep me updated
         let expected = vec![
             ResponseItem::Message {
                 id: None,
+                role: "developer".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "fresh permissions".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "older user".to_string(),
@@ -1189,15 +1220,6 @@ keep me updated
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: format!("{SUMMARY_PREFIX}\nsummary text"),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "developer".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: "fresh permissions".to_string(),
                 }],
                 end_turn: None,
                 phase: None,
