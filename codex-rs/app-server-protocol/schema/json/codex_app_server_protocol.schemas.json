@@ -12574,6 +12574,12 @@
               "null"
             ]
           },
+          "dangerouslyAllowAllUnixSockets": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "dangerouslyAllowNonLoopbackAdmin": {
             "type": [
               "boolean",
