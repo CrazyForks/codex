@@ -1745,7 +1745,7 @@ async fn snapshot_request_shape_remote_manual_compact_without_previous_user_mess
     insta::assert_snapshot!(
         "remote_manual_compact_without_prev_user_shapes",
         format!(
-            "## Remote Compaction Request\n<SKIPPED_EMPTY_INPUT>\n\n## Remote Post-Compaction History Request\n{}",
+            "## Remote Post-Compaction History Request\n{}",
             request_input_shape(&follow_up_request)
         )
     );

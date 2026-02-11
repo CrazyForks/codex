@@ -1,10 +1,7 @@
 ---
 source: core/tests/suite/compact_remote.rs
-expression: "format!(\"## Remote Compaction Request\\n<SKIPPED_EMPTY_INPUT>\\n\\n## Remote Post-Compaction History Request\\n{}\",\nrequest_input_shape(&follow_up_request))"
+expression: "format!(\"## Remote Post-Compaction History Request\\n{}\",\nrequest_input_shape(&follow_up_request))"
 ---
-## Remote Compaction Request
-<SKIPPED_EMPTY_INPUT>
-
 ## Remote Post-Compaction History Request
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
