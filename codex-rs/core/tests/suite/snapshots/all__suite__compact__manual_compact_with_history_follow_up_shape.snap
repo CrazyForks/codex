@@ -1,0 +1,10 @@
+---
+source: core/tests/suite/compact.rs
+expression: follow_up_shape
+---
+00:message/user:MANUAL_WITH_HISTORY_USER_ONE
+01:message/user:<SUMMARY:MANUAL_SUMMARY>
+02:message/developer:<PERMISSIONS_INSTRUCTIONS>
+03:message/user:<AGENTS_MD>
+04:message/user:<ENVIRONMENT_CONTEXT>
+05:message/user:MANUAL_WITH_HISTORY_USER_TWO
