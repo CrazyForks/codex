@@ -54,7 +54,7 @@ pub(crate) async fn run_remote_compact_task(
     });
     sess.send_event(&turn_context, start_event).await;
 
-    if let Err(err) = run_remote_compact_task_inner(
+    run_remote_compact_task_inner(
         &sess,
         &turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
@@ -64,14 +64,6 @@ pub(crate) async fn run_remote_compact_task(
         None,
     )
     .await
-    {
-        let event = EventMsg::Error(
-            err.to_error_event(Some("Error running remote compact task".to_string())),
-        );
-        sess.send_event(&turn_context, event).await;
-        return Err(err);
-    }
-    Ok(())
 }
 
 async fn run_remote_compact_task_inner(

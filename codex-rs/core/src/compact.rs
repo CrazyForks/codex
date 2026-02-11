@@ -109,8 +109,6 @@ pub(crate) async fn run_compact_task(
     )
     .await
     {
-        let event = EventMsg::Error(err.to_error_event(None));
-        sess.send_event(&turn_context, event).await;
         return Err(err);
     }
     Ok(())

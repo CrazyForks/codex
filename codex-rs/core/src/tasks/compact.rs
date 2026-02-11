@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::SessionTask;
 use super::SessionTaskContext;
 use crate::codex::TurnContext;
+use crate::protocol::EventMsg;
 use crate::state::TaskKind;
 use async_trait::async_trait;
 use codex_protocol::user_input::UserInput;
@@ -31,14 +32,26 @@ impl SessionTask for CompactTask {
                 1,
                 &[("type", "remote")],
             );
-            let _ = crate::compact_remote::run_remote_compact_task(session, ctx).await;
+            if let Err(err) =
+                crate::compact_remote::run_remote_compact_task(session.clone(), ctx.clone()).await
+            {
+                let event = EventMsg::Error(
+                    err.to_error_event(Some("Error running remote compact task".to_string())),
+                );
+                session.send_event(&ctx, event).await;
+            }
         } else {
             let _ = session.services.otel_manager.counter(
                 "codex.task.compact",
                 1,
                 &[("type", "local")],
             );
-            let _ = crate::compact::run_compact_task(session, ctx, input).await;
+            if let Err(err) =
+                crate::compact::run_compact_task(session.clone(), ctx.clone(), input).await
+            {
+                let event = EventMsg::Error(err.to_error_event(None));
+                session.send_event(&ctx, event).await;
+            }
         }
 
         None
