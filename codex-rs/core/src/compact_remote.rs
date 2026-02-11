@@ -28,7 +28,6 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
     // Controls whether canonical turn context should be reinserted into compacted history.
-    // Pre-turn fallback compaction explicitly passes `Skip`.
     turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
