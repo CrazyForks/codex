@@ -260,14 +260,11 @@ async fn run_compact_task_inner(
     let history_items = history_snapshot.raw_items();
     let summary_suffix = get_last_assistant_message_from_turn(history_items).unwrap_or_default();
     let summary_text = format!("{SUMMARY_PREFIX}\n{summary_suffix}");
-    let mut user_messages = collect_user_messages(history_items);
-    if let Some(incoming_items) = incoming_items.as_ref() {
-        for incoming_item in incoming_items {
-            if let Some(incoming_user_message) = real_user_message_text(incoming_item) {
-                user_messages.push(incoming_user_message);
-            }
-        }
-    }
+    let user_messages = collect_user_messages(history_items);
+    let incoming_user_items = incoming_items
+        .as_ref()
+        .map(|items| collect_real_user_message_items(items))
+        .unwrap_or_default();
 
     let initial_context = match turn_context_reinjection {
         TurnContextReinjection::ReinjectAboveLastRealUser => {
@@ -275,7 +272,12 @@ async fn run_compact_task_inner(
         }
         TurnContextReinjection::Skip => Vec::new(),
     };
-    let compacted_history = build_compacted_history(&user_messages, &summary_text);
+    let compacted_history = build_compacted_history_with_limit_and_preserved_user_items(
+        &user_messages,
+        &incoming_user_items,
+        &summary_text,
+        COMPACT_USER_MESSAGE_MAX_TOKENS,
+    );
     let mut new_history = process_compacted_history(
         compacted_history,
         &initial_context,
@@ -337,6 +339,14 @@ pub(crate) fn collect_user_messages(items: &[ResponseItem]) -> Vec<String> {
             }
             _ => None,
         })
+        .collect()
+}
+
+fn collect_real_user_message_items(items: &[ResponseItem]) -> Vec<ResponseItem> {
+    items
+        .iter()
+        .filter(|item| real_user_message_text(item).is_some())
+        .cloned()
         .collect()
 }
 
@@ -416,6 +426,20 @@ fn build_compacted_history_with_limit(
     summary_text: &str,
     max_tokens: usize,
 ) -> Vec<ResponseItem> {
+    build_compacted_history_with_limit_and_preserved_user_items(
+        user_messages,
+        &[],
+        summary_text,
+        max_tokens,
+    )
+}
+
+fn build_compacted_history_with_limit_and_preserved_user_items(
+    user_messages: &[String],
+    preserved_user_items: &[ResponseItem],
+    summary_text: &str,
+    max_tokens: usize,
+) -> Vec<ResponseItem> {
     let mut history = Vec::new();
     let mut selected_messages: Vec<String> = Vec::new();
     if max_tokens > 0 {
@@ -448,6 +472,8 @@ fn build_compacted_history_with_limit(
             phase: None,
         });
     }
+
+    history.extend(preserved_user_items.iter().cloned());
 
     let summary_text = if summary_text.is_empty() {
         "(no summary available)".to_string()
@@ -680,6 +706,55 @@ do things
             other => panic!("expected summary message, found {other:?}"),
         };
         assert_eq!(summary, summary_text);
+    }
+
+    #[test]
+    fn build_compacted_history_preserves_incoming_user_item_structure() {
+        let preserved_user_item = ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![
+                ContentItem::InputImage {
+                    image_url: "data:image/png;base64,AAAA".to_string(),
+                },
+                ContentItem::InputText {
+                    text: "latest user with image".to_string(),
+                },
+            ],
+            end_turn: None,
+            phase: None,
+        };
+
+        let history = super::build_compacted_history_with_limit_and_preserved_user_items(
+            &["older user".to_string()],
+            std::slice::from_ref(&preserved_user_item),
+            "SUMMARY",
+            128,
+        );
+
+        let expected = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "older user".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            preserved_user_item,
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "SUMMARY".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        assert_eq!(history, expected);
     }
 
     #[test]

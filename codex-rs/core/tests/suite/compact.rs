@@ -2646,7 +2646,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
         .expect("build codex")
         .codex;
 
-    for user in ["USER_ONE", "USER_TWO", "USER_THREE"] {
+    for user in ["USER_ONE", "USER_TWO"] {
         codex
             .submit(Op::UserInput {
                 items: vec![UserInput::Text {
@@ -2659,6 +2659,24 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
             .expect("submit user input");
         wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
     }
+    let image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        .to_string();
+    codex
+        .submit(Op::UserInput {
+            items: vec![
+                UserInput::Image {
+                    image_url: image_url.clone(),
+                },
+                UserInput::Text {
+                    text: "USER_THREE".to_string(),
+                    text_elements: Vec::new(),
+                },
+            ],
+            final_output_json_schema: None,
+        })
+        .await
+        .expect("submit user input");
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
     assert_eq!(requests.len(), 4, "expected user, user, compact, follow-up");
@@ -2679,6 +2697,27 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
     assert!(
         compact_shape.contains("USER_THREE"),
         "expected compact request to include incoming user message"
+    );
+    let follow_up_has_incoming_image = requests[3].inputs_of_type("message").iter().any(|item| {
+        if item.get("role").and_then(Value::as_str) != Some("user") {
+            return false;
+        }
+        let Some(content) = item.get("content").and_then(Value::as_array) else {
+            return false;
+        };
+        let has_user_text = content.iter().any(|span| {
+            span.get("type").and_then(Value::as_str) == Some("input_text")
+                && span.get("text").and_then(Value::as_str) == Some("USER_THREE")
+        });
+        let has_image = content.iter().any(|span| {
+            span.get("type").and_then(Value::as_str) == Some("input_image")
+                && span.get("image_url").and_then(Value::as_str) == Some(image_url.as_str())
+        });
+        has_user_text && has_image
+    });
+    assert!(
+        follow_up_has_incoming_image,
+        "expected post-compaction follow-up request to keep incoming user image content"
     );
     assert!(
         follow_up_shape.contains("<SUMMARY:PRE_TURN_SUMMARY>"),
