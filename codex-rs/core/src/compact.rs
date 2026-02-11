@@ -7,6 +7,7 @@ use crate::client_common::ResponseEvent;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::get_last_assistant_message_from_turn;
+use crate::context_manager::is_user_turn_boundary;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::protocol::CompactedItem;
@@ -125,6 +126,10 @@ async fn run_compact_task_inner(
     let mut history = sess.clone_history().await;
     if let Some(incoming_items) = incoming_items.as_ref() {
         history.record_items(incoming_items.iter(), turn_context.truncation_policy);
+    }
+    if !history.raw_items().iter().any(is_user_turn_boundary) {
+        // Initial context without any associated user turn should not be compacted on its own.
+        history.replace(Vec::new());
     }
     history.record_items(
         &[initial_input_for_turn.into()],

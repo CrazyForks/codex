@@ -9,6 +9,7 @@ use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::is_codex_generated_item;
+use crate::context_manager::is_user_turn_boundary;
 use crate::error::CodexErr;
 use crate::error::Result as CodexResult;
 use crate::protocol::CompactedItem;
@@ -111,6 +112,10 @@ async fn run_remote_compact_task_inner_impl(
     );
     if let Some(incoming_items) = incoming_items {
         history.record_items(incoming_items.iter(), turn_context.truncation_policy);
+    }
+    if !history.raw_items().iter().any(is_user_turn_boundary) {
+        // Initial context without any associated user turn should not be compacted on its own.
+        history.replace(Vec::new());
     }
     if deleted_items > 0 {
         info!(

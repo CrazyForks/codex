@@ -1717,14 +1717,9 @@ async fn snapshot_request_shape_remote_manual_compact_without_previous_user_mess
     )
     .await;
 
-    let compacted_history = vec![user_message_item(&summary_with_prefix(
-        "REMOTE_MANUAL_EMPTY_SUMMARY",
-    ))];
-    let compact_mock = responses::mount_compact_json_once(
-        harness.server(),
-        serde_json::json!({ "output": compacted_history }),
-    )
-    .await;
+    let compact_mock =
+        responses::mount_compact_json_once(harness.server(), serde_json::json!({ "output": [] }))
+            .await;
 
     codex.submit(Op::Compact).await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -1740,20 +1735,27 @@ async fn snapshot_request_shape_remote_manual_compact_without_previous_user_mess
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    assert_eq!(compact_mock.requests().len(), 1);
-    let compact_request = compact_mock.single_request();
+    assert_eq!(
+        compact_mock.requests().len(),
+        0,
+        "manual remote /compact should skip remote compaction when there is no associated user"
+    );
     let follow_up_request = responses_mock.single_request();
     let follow_up_shape = request_input_shape(&follow_up_request);
     insta::assert_snapshot!(
         "remote_manual_compact_without_prev_user_shapes",
-        sectioned_request_shapes(&[
-            ("Remote Compaction Request", &compact_request),
-            ("Remote Post-Compaction History Request", &follow_up_request),
-        ])
+        format!(
+            "## Remote Compaction Request\n<SKIPPED_EMPTY_INPUT>\n\n## Remote Post-Compaction History Request\n{}",
+            request_input_shape(&follow_up_request)
+        )
     );
     assert!(
-        follow_up_shape.contains("<SUMMARY:REMOTE_MANUAL_EMPTY_SUMMARY>"),
-        "post-compact request should include compact summary"
+        !follow_up_shape.contains("<SUMMARY:REMOTE_MANUAL_EMPTY_SUMMARY>"),
+        "post-compact request should not include compact summary when remote compaction is skipped"
+    );
+    assert!(
+        follow_up_shape.contains("USER_ONE"),
+        "post-compact request should include the submitted user message"
     );
 
     Ok(())
