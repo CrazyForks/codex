@@ -3875,13 +3875,22 @@ pub(crate) async fn run_turn(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, event).await;
-    let pre_turn_compaction_outcome = run_pre_turn_auto_compaction_if_needed(
+    let pre_turn_compaction_outcome = match run_pre_turn_auto_compaction_if_needed(
         &sess,
         &turn_context,
         auto_compact_limit,
         &incoming_turn_items,
     )
-    .await?;
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(message) => {
+            let event =
+                EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
+            sess.send_event(&turn_context, event).await;
+            return None;
+        }
+    };
 
     let skills_outcome = Some(
         sess.services
@@ -4178,7 +4187,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     turn_context: &Arc<TurnContext>,
     auto_compact_limit: i64,
     incoming_turn_items: &[ResponseItem],
-) -> Option<PreTurnCompactionOutcome> {
+) -> Result<PreTurnCompactionOutcome, String> {
     let total_usage_tokens = sess.get_total_token_usage().await;
     let incoming_items_tokens_estimate = incoming_turn_items
         .iter()
@@ -4189,7 +4198,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
         incoming_items_tokens_estimate,
         auto_compact_limit,
     ) {
-        return Some(PreTurnCompactionOutcome::NotNeeded);
+        return Ok(PreTurnCompactionOutcome::NotNeeded);
     }
 
     if run_auto_compact(
@@ -4201,7 +4210,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     .await
     .is_ok()
     {
-        return Some(PreTurnCompactionOutcome::CompactedWithIncomingItems);
+        return Ok(PreTurnCompactionOutcome::CompactedWithIncomingItems);
     }
 
     // Fallback: compact from the end of the previous turn, then append current turn context
@@ -4223,15 +4232,12 @@ async fn run_pre_turn_auto_compaction_if_needed(
             reason = "pre-turn fallback compaction without incoming items failed",
             "incoming user/context is too large for pre-turn auto-compaction flow"
         );
-        let message = format!(
+        return Err(format!(
             "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
-        );
-        let event = EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
-        sess.send_event(turn_context, event).await;
-        return None;
+        ));
     }
 
-    Some(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
+    Ok(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
 }
 
 fn is_projected_submission_over_auto_compact_limit(
