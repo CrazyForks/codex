@@ -27,7 +27,6 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::user_input::UserInput;
 use futures::prelude::*;
 use tracing::error;
-use tracing::warn;
 
 pub const SUMMARIZATION_PROMPT: &str = include_str!("../templates/compact/prompt.md");
 pub const SUMMARY_PREFIX: &str = include_str!("../templates/compact/summary_prefix.md");
@@ -350,11 +349,6 @@ pub(crate) fn process_compacted_history(
             {
                 compacted_history
                     .splice(insertion_index..insertion_index, initial_context.to_vec());
-            } else {
-                warn!(
-                    compacted_history_len = compacted_history.len(),
-                    "remote compacted history has no real user message; skipping automatic turn-context insertion"
-                );
             }
         }
         TurnContextReinjection::Skip => {}
