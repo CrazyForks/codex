@@ -343,22 +343,12 @@ pub(crate) fn process_compacted_history(
 ) -> Vec<ResponseItem> {
     // Keep only model-visible transcript items that we allow from remote compaction output.
     compacted_history.retain(should_keep_compacted_history_item);
-    // Keep any summary user messages at the tail so canonical context insertion can anchor on the
-    // last real user message in the conversation.
-    // Remote compactors can interleave summary user messages throughout output. Keep relative
-    // ordering among non-summary items and move summaries to the tail to keep a stable "real user"
-    // anchor for reinsertion.
-    let mut kept = Vec::with_capacity(compacted_history.len());
-    let mut summaries = Vec::new();
-    for item in compacted_history.drain(..) {
-        if is_summary_user_message(&item) {
-            summaries.push(item);
-        } else {
-            kept.push(item);
-        }
+    // Keep historical summaries in-place, but force the latest summary to the tail so the
+    // conversation ends with the newest compaction summary message.
+    if let Some(last_summary_index) = compacted_history.iter().rposition(is_summary_user_message) {
+        let last_summary = compacted_history.remove(last_summary_index);
+        compacted_history.push(last_summary);
     }
-    kept.extend(summaries);
-    compacted_history = kept;
 
     if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
         // Insert immediately above the last real user message so turn context applies to that
@@ -1200,6 +1190,108 @@ keep me updated
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: format!("{SUMMARY_PREFIX}\nsummary text"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+        assert_eq!(refreshed, expected);
+    }
+
+    #[test]
+    fn process_compacted_history_keeps_earlier_summaries_interleaved() {
+        let compacted_history = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "older user".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nolder summary"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "newer user".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nlatest summary"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "assistant after latest summary".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+        ];
+
+        let refreshed =
+            process_compacted_history(compacted_history, &[], TurnContextReinjection::Skip);
+        let expected = vec![
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "older user".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nolder summary"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "newer user".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "assistant after latest summary".to_string(),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nlatest summary"),
                 }],
                 end_turn: None,
                 phase: None,
