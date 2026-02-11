@@ -1,8 +1,8 @@
 ---
 source: core/tests/suite/compact.rs
-expression: "sectioned_request_shapes(&[(\"Compaction Request (Including Incoming Attempt)\",\n&requests[1]),\n(\"Compaction Request (Fallback Excluding Incoming)\", &requests[2]),\n(\"Post-Compaction History Request\", &requests[3]),])"
+expression: "sectioned_request_shapes(&[(\"Local Compaction Request (Including Incoming Attempt)\",\n&requests[1]),\n(\"Local Compaction Request (Fallback Excluding Incoming)\", &requests[2]),\n(\"Local Post-Compaction History Request\", &requests[3]),])"
 ---
-## Compaction Request (Including Incoming Attempt)
+## Local Compaction Request (Including Incoming Attempt)
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
 02:message/user:<ENVIRONMENT_CONTEXT>
@@ -11,7 +11,7 @@ expression: "sectioned_request_shapes(&[(\"Compaction Request (Including Incomin
 05:message/user:USER_TWO
 06:message/user:<SUMMARIZATION_PROMPT>
 
-## Compaction Request (Fallback Excluding Incoming)
+## Local Compaction Request (Fallback Excluding Incoming)
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
 02:message/user:<ENVIRONMENT_CONTEXT>
@@ -19,7 +19,7 @@ expression: "sectioned_request_shapes(&[(\"Compaction Request (Including Incomin
 04:message/assistant:FIRST_REPLY
 05:message/user:<SUMMARIZATION_PROMPT>
 
-## Post-Compaction History Request
+## Local Post-Compaction History Request
 00:message/user:USER_ONE
 01:message/user:<SUMMARY:FALLBACK_SUMMARY>
 02:message/developer:<PERMISSIONS_INSTRUCTIONS>

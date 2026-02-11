@@ -1,8 +1,8 @@
 ---
 source: core/tests/suite/compact.rs
-expression: "sectioned_request_shapes(&[(\"Compaction Request\", &requests[2]),\n(\"Post-Compaction History Request\", &requests[3]),])"
+expression: "sectioned_request_shapes(&[(\"Local Compaction Request\", &requests[2]),\n(\"Local Post-Compaction History Request\", &requests[3]),])"
 ---
-## Compaction Request
+## Local Compaction Request
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
 02:message/user:<ENVIRONMENT_CONTEXT>
@@ -13,7 +13,7 @@ expression: "sectioned_request_shapes(&[(\"Compaction Request\", &requests[2]),\
 07:message/user:USER_THREE
 08:message/user:<SUMMARIZATION_PROMPT>
 
-## Post-Compaction History Request
+## Local Post-Compaction History Request
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
 02:message/user:<ENVIRONMENT_CONTEXT>

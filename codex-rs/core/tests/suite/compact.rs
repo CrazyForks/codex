@@ -2637,8 +2637,8 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
     insta::assert_snapshot!(
         "pre_turn_compaction_including_incoming_shapes",
         sectioned_request_shapes(&[
-            ("Compaction Request", &requests[2]),
-            ("Post-Compaction History Request", &requests[3]),
+            ("Local Compaction Request", &requests[2]),
+            ("Local Post-Compaction History Request", &requests[3]),
         ])
     );
     assert!(
@@ -2736,14 +2736,14 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
         "pre_turn_compaction_fallback_shapes",
         sectioned_request_shapes(&[
             (
-                "Compaction Request (Including Incoming Attempt)",
+                "Local Compaction Request (Including Incoming Attempt)",
                 &requests[1]
             ),
             (
-                "Compaction Request (Fallback Excluding Incoming)",
+                "Local Compaction Request (Fallback Excluding Incoming)",
                 &requests[2]
             ),
-            ("Post-Compaction History Request", &requests[3]),
+            ("Local Post-Compaction History Request", &requests[3]),
         ])
     );
 
@@ -2817,8 +2817,8 @@ async fn snapshot_request_shape_mid_turn_continuation_compaction() {
     insta::assert_snapshot!(
         "mid_turn_compaction_shapes",
         sectioned_request_shapes(&[
-            ("Compaction Request", &requests[1]),
-            ("Post-Compaction History Request", &requests[2]),
+            ("Local Compaction Request", &requests[1]),
+            ("Local Post-Compaction History Request", &requests[2]),
         ])
     );
     assert!(
@@ -2889,8 +2889,8 @@ async fn snapshot_request_shape_manual_compact_without_previous_user_messages() 
     insta::assert_snapshot!(
         "manual_compact_without_prev_user_shapes",
         sectioned_request_shapes(&[
-            ("Compaction Request", &requests[0]),
-            ("Post-Compaction History Request", &requests[1]),
+            ("Local Compaction Request", &requests[0]),
+            ("Local Post-Compaction History Request", &requests[1]),
         ])
     );
     assert!(
@@ -2970,8 +2970,8 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
     insta::assert_snapshot!(
         "manual_compact_with_history_shapes",
         sectioned_request_shapes(&[
-            ("Compaction Request", &requests[1]),
-            ("Post-Compaction History Request", &requests[2]),
+            ("Local Compaction Request", &requests[1]),
+            ("Local Post-Compaction History Request", &requests[2]),
         ])
     );
     assert!(
