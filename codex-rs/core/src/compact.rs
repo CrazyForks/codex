@@ -348,23 +348,6 @@ pub(crate) fn process_compacted_history(
     compacted_history.retain(should_keep_compacted_history_item);
     // Keep any summary user messages at the tail so canonical context insertion can anchor on the
     // last real user message in the conversation.
-    move_summary_user_messages_to_end(&mut compacted_history);
-
-    if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
-        if let Some(insertion_index) = find_turn_context_insertion_index(&compacted_history) {
-            compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
-        } else {
-            warn!(
-                compacted_history_len = compacted_history.len(),
-                "remote compacted history has no real user message; skipping automatic turn-context insertion"
-            );
-        }
-    }
-
-    compacted_history
-}
-
-fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) {
     // Remote compactors can interleave summary user messages throughout output. Keep relative
     // ordering among non-summary items and move summaries to the tail to keep a stable "real user"
     // anchor for reinsertion.
@@ -378,17 +361,25 @@ fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) 
         }
     }
     kept.extend(summaries);
-    *compacted_history = kept;
-}
+    compacted_history = kept;
 
-fn find_turn_context_insertion_index(compacted_history: &[ResponseItem]) -> Option<usize> {
-    // Insert immediately above the last real user message so turn context applies to that user
-    // input rather than an earlier turn.
-    compacted_history.iter().rposition(is_real_user_message)
-}
+    if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
+        // Insert immediately above the last real user message so turn context applies to that
+        // user input rather than an earlier turn.
+        if let Some(insertion_index) = compacted_history
+            .iter()
+            .rposition(|item| real_user_message_text(item).is_some())
+        {
+            compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
+        } else {
+            warn!(
+                compacted_history_len = compacted_history.len(),
+                "remote compacted history has no real user message; skipping automatic turn-context insertion"
+            );
+        }
+    }
 
-fn is_real_user_message(item: &ResponseItem) -> bool {
-    real_user_message_text(item).is_some()
+    compacted_history
 }
 
 fn is_summary_user_message(item: &ResponseItem) -> bool {
