@@ -47,7 +47,6 @@ pub(crate) enum AutoCompactCallsite {
 
 /// Controls whether compacted-history processing should reinsert canonical turn context.
 ///
-/// This is intentionally independent from whether compaction input included incoming turn items.
 /// Pre-turn fallback compaction excludes incoming user/context from the compaction request and
 /// must also skip reinjection into pre-turn history, because `run_turn` appends fresh canonical
 /// context directly above the incoming user message after compaction completes.
