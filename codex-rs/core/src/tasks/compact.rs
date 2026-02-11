@@ -49,7 +49,9 @@ impl SessionTask for CompactTask {
             if let Err(err) =
                 crate::compact::run_compact_task(session.clone(), ctx.clone(), input).await
             {
-                let event = EventMsg::Error(err.to_error_event(None));
+                let event = EventMsg::Error(
+                    err.to_error_event(Some("Error running local compact task".to_string())),
+                );
                 session.send_event(&ctx, event).await;
             }
         }
