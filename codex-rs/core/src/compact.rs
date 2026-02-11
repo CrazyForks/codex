@@ -339,12 +339,6 @@ pub(crate) fn process_compacted_history(
 ) -> Vec<ResponseItem> {
     // Keep only model-visible transcript items that we allow from remote compaction output.
     compacted_history.retain(should_keep_compacted_history_item);
-    // Keep historical summaries in-place, but force the latest summary to the tail so the
-    // conversation ends with the newest compaction summary message.
-    if let Some(last_summary_index) = compacted_history.iter().rposition(is_summary_user_message) {
-        let last_summary = compacted_history.remove(last_summary_index);
-        compacted_history.push(last_summary);
-    }
 
     if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
         // Insert immediately above the last real user message so turn context applies to that
@@ -363,13 +357,6 @@ pub(crate) fn process_compacted_history(
     }
 
     compacted_history
-}
-
-fn is_summary_user_message(item: &ResponseItem) -> bool {
-    match crate::event_mapping::parse_turn_item(item) {
-        Some(TurnItem::UserMessage(user_message)) => is_summary_message(&user_message.message()),
-        _ => false,
-    }
 }
 
 fn real_user_message_text(item: &ResponseItem) -> Option<String> {
@@ -1096,6 +1083,15 @@ keep me updated
             },
             ResponseItem::Message {
                 id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nsummary text"),
+                }],
+                end_turn: None,
+                phase: None,
+            },
+            ResponseItem::Message {
+                id: None,
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "fresh permissions".to_string(),
@@ -1108,15 +1104,6 @@ keep me updated
                 role: "user".to_string(),
                 content: vec![ContentItem::InputText {
                     text: "latest user".to_string(),
-                }],
-                end_turn: None,
-                phase: None,
-            },
-            ResponseItem::Message {
-                id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: format!("{SUMMARY_PREFIX}\nsummary text"),
                 }],
                 end_turn: None,
                 phase: None,
@@ -1195,7 +1182,7 @@ keep me updated
     }
 
     #[test]
-    fn process_compacted_history_keeps_earlier_summaries_interleaved() {
+    fn process_compacted_history_preserves_summary_order() {
         let compacted_history = vec![
             ResponseItem::Message {
                 id: None,
@@ -1276,18 +1263,18 @@ keep me updated
             },
             ResponseItem::Message {
                 id: None,
-                role: "assistant".to_string(),
-                content: vec![ContentItem::OutputText {
-                    text: "assistant after latest summary".to_string(),
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: format!("{SUMMARY_PREFIX}\nlatest summary"),
                 }],
                 end_turn: None,
                 phase: None,
             },
             ResponseItem::Message {
                 id: None,
-                role: "user".to_string(),
-                content: vec![ContentItem::InputText {
-                    text: format!("{SUMMARY_PREFIX}\nlatest summary"),
+                role: "assistant".to_string(),
+                content: vec![ContentItem::OutputText {
+                    text: "assistant after latest summary".to_string(),
                 }],
                 end_turn: None,
                 phase: None,

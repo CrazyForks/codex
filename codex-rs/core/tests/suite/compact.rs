@@ -221,6 +221,14 @@ fn request_input_shape(request: &ResponsesRequest) -> String {
         .join("\n")
 }
 
+fn sectioned_request_shapes(sections: &[(&str, &ResponsesRequest)]) -> String {
+    sections
+        .iter()
+        .map(|(title, request)| format!("## {title}\n{}", request_input_shape(request)))
+        .collect::<Vec<String>>()
+        .join("\n\n")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn summarize_context_three_requests_and_instructions() {
     skip_if_no_network!();
@@ -2618,12 +2626,11 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
     let compact_shape = request_input_shape(&requests[2]);
     let follow_up_shape = request_input_shape(&requests[3]);
     insta::assert_snapshot!(
-        "pre_turn_compaction_including_incoming_request_shape",
-        compact_shape
-    );
-    insta::assert_snapshot!(
-        "pre_turn_compaction_including_incoming_follow_up_shape",
-        follow_up_shape
+        "pre_turn_compaction_including_incoming_shapes",
+        sectioned_request_shapes(&[
+            ("Compaction Request", &requests[2]),
+            ("Post-Compaction History Request", &requests[3]),
+        ])
     );
     assert!(
         compact_shape.contains("<SUMMARIZATION_PROMPT>"),
@@ -2717,16 +2724,18 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
     let fallback_attempt_shape = request_input_shape(&requests[2]);
     let follow_up_shape = request_input_shape(&requests[3]);
     insta::assert_snapshot!(
-        "pre_turn_compaction_fallback_include_attempt_request_shape",
-        include_attempt_shape
-    );
-    insta::assert_snapshot!(
-        "pre_turn_compaction_fallback_excluding_incoming_request_shape",
-        fallback_attempt_shape
-    );
-    insta::assert_snapshot!(
-        "pre_turn_compaction_fallback_follow_up_shape",
-        follow_up_shape
+        "pre_turn_compaction_fallback_shapes",
+        sectioned_request_shapes(&[
+            (
+                "Compaction Request (Including Incoming Attempt)",
+                &requests[1]
+            ),
+            (
+                "Compaction Request (Fallback Excluding Incoming)",
+                &requests[2]
+            ),
+            ("Post-Compaction History Request", &requests[3]),
+        ])
     );
 
     assert!(
@@ -2796,8 +2805,13 @@ async fn snapshot_request_shape_mid_turn_continuation_compaction() {
 
     let compact_shape = request_input_shape(&requests[1]);
     let follow_up_shape = request_input_shape(&requests[2]);
-    insta::assert_snapshot!("mid_turn_compaction_request_shape", compact_shape);
-    insta::assert_snapshot!("mid_turn_compaction_follow_up_shape", follow_up_shape);
+    insta::assert_snapshot!(
+        "mid_turn_compaction_shapes",
+        sectioned_request_shapes(&[
+            ("Compaction Request", &requests[1]),
+            ("Post-Compaction History Request", &requests[2]),
+        ])
+    );
     assert!(
         compact_shape.contains("function_call_output"),
         "mid-turn compaction request should include function call output"
@@ -2864,12 +2878,11 @@ async fn snapshot_request_shape_manual_compact_without_previous_user_messages() 
     let compact_shape = request_input_shape(&requests[0]);
     let follow_up_shape = request_input_shape(&requests[1]);
     insta::assert_snapshot!(
-        "manual_compact_without_prev_user_request_shape",
-        compact_shape
-    );
-    insta::assert_snapshot!(
-        "manual_compact_without_prev_user_follow_up_shape",
-        follow_up_shape
+        "manual_compact_without_prev_user_shapes",
+        sectioned_request_shapes(&[
+            ("Compaction Request", &requests[0]),
+            ("Post-Compaction History Request", &requests[1]),
+        ])
     );
     assert!(
         compact_shape.contains("<SUMMARIZATION_PROMPT>"),
@@ -2945,10 +2958,12 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
 
     let compact_shape = request_input_shape(&requests[1]);
     let follow_up_shape = request_input_shape(&requests[2]);
-    insta::assert_snapshot!("manual_compact_with_history_request_shape", compact_shape);
     insta::assert_snapshot!(
-        "manual_compact_with_history_follow_up_shape",
-        follow_up_shape
+        "manual_compact_with_history_shapes",
+        sectioned_request_shapes(&[
+            ("Compaction Request", &requests[1]),
+            ("Post-Compaction History Request", &requests[2]),
+        ])
     );
     assert!(
         compact_shape.contains("MANUAL_WITH_HISTORY_USER_ONE"),

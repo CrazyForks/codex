@@ -1,0 +1,16 @@
+---
+source: core/tests/suite/compact.rs
+expression: "sectioned_request_shapes(&[(\"Compaction Request\", &requests[0]),\n(\"Post-Compaction History Request\", &requests[1]),])"
+---
+## Compaction Request
+00:message/developer:<PERMISSIONS_INSTRUCTIONS>
+01:message/user:<AGENTS_MD>
+02:message/user:<ENVIRONMENT_CONTEXT>
+03:message/user:<SUMMARIZATION_PROMPT>
+
+## Post-Compaction History Request
+00:message/user:<SUMMARY:MANUAL_EMPTY_SUMMARY>
+01:message/developer:<PERMISSIONS_INSTRUCTIONS>
+02:message/user:<AGENTS_MD>
+03:message/user:<ENVIRONMENT_CONTEXT>
+04:message/user:AFTER_MANUAL_EMPTY_COMPACT

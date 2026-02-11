@@ -1,0 +1,19 @@
+---
+source: core/tests/suite/compact.rs
+expression: "sectioned_request_shapes(&[(\"Compaction Request\", &requests[1]),\n(\"Post-Compaction History Request\", &requests[2]),])"
+---
+## Compaction Request
+00:message/developer:<PERMISSIONS_INSTRUCTIONS>
+01:message/user:<AGENTS_MD>
+02:message/user:<ENVIRONMENT_CONTEXT>
+03:message/user:MID_TURN_USER
+04:function_call/unsupported_tool
+05:function_call_output:unsupported call: unsupported_tool
+06:message/user:<SUMMARIZATION_PROMPT>
+
+## Post-Compaction History Request
+00:message/developer:<PERMISSIONS_INSTRUCTIONS>
+01:message/user:<AGENTS_MD>
+02:message/user:<ENVIRONMENT_CONTEXT>
+03:message/user:MID_TURN_USER
+04:message/user:<SUMMARY:MID_TURN_SUMMARY>
