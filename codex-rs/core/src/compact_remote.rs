@@ -38,7 +38,6 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
         auto_compact_callsite,
         turn_context_reinjection,
         incoming_items,
-        false,
     )
     .await?;
     Ok(())
@@ -55,7 +54,7 @@ pub(crate) async fn run_remote_compact_task(
     });
     sess.send_event(&turn_context, start_event).await;
 
-    run_remote_compact_task_inner(
+    if let Err(err) = run_remote_compact_task_inner(
         &sess,
         &turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
@@ -63,9 +62,16 @@ pub(crate) async fn run_remote_compact_task(
         // reinjection behavior even though it reuses this callsite for logging.
         TurnContextReinjection::ReinjectAboveLastRealUser,
         None,
-        true,
     )
     .await
+    {
+        let event = EventMsg::Error(
+            err.to_error_event(Some("Error running remote compact task".to_string())),
+        );
+        sess.send_event(&turn_context, event).await;
+        return Err(err);
+    }
+    Ok(())
 }
 
 async fn run_remote_compact_task_inner(
@@ -74,7 +80,6 @@ async fn run_remote_compact_task_inner(
     auto_compact_callsite: AutoCompactCallsite,
     turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
-    emit_error_events: bool,
 ) -> CodexResult<()> {
     if let Err(err) = run_remote_compact_task_inner_impl(
         sess,
@@ -91,12 +96,6 @@ async fn run_remote_compact_task_inner(
             compact_error = %err,
             "remote compaction task failed"
         );
-        if emit_error_events {
-            let event = EventMsg::Error(
-                err.to_error_event(Some("Error running remote compact task".to_string())),
-            );
-            sess.send_event(turn_context, event).await;
-        }
         return Err(err);
     }
     Ok(())
