@@ -279,7 +279,7 @@ async fn run_compact_task_inner(
 
     let rollout_item = RolloutItem::Compacted(CompactedItem {
         message: summary_text.clone(),
-        replacement_history: None,
+        replacement_history: Some(sess.clone_history().await.raw_items().to_vec()),
     });
     sess.persist_rollout_items(&[rollout_item]).await;
 

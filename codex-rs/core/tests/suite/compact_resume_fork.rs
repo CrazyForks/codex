@@ -356,6 +356,17 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "model": expected_model,
       "instructions": prompt,
       "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hello world"
+            }
+          ]
+        },
+        summary_after_compact,
         permissions_message,
         {
           "type": "message",
@@ -377,17 +388,6 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
             }
           ]
         },
-        {
-          "type": "message",
-          "role": "user",
-          "content": [
-            {
-              "type": "input_text",
-              "text": "hello world"
-            }
-          ]
-        },
-        summary_after_compact,
         {
           "type": "message",
           "role": "user",
@@ -418,6 +418,17 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "model": expected_model,
       "instructions": prompt,
       "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hello world"
+            }
+          ]
+        },
+        summary_after_resume,
         permissions_message,
         {
           "type": "message",
@@ -439,17 +450,6 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
             }
           ]
         },
-        {
-          "type": "message",
-          "role": "user",
-          "content": [
-            {
-              "type": "input_text",
-              "text": "hello world"
-            }
-          ]
-        },
-        summary_after_resume,
         {
           "type": "message",
           "role": "user",
@@ -521,6 +521,17 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
       "model": expected_model,
       "instructions": prompt,
       "input": [
+        {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "hello world"
+            }
+          ]
+        },
+        summary_after_fork,
         permissions_message,
         {
           "type": "message",
@@ -542,17 +553,6 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
             }
           ]
         },
-        {
-          "type": "message",
-          "role": "user",
-          "content": [
-            {
-              "type": "input_text",
-              "text": "hello world"
-            }
-          ]
-        },
-        summary_after_fork,
         {
           "type": "message",
           "role": "user",
@@ -749,6 +749,17 @@ async fn compact_resume_after_second_compaction_preserves_history() {
       {
         "instructions": prompt,
         "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "AFTER_FORK"
+              }
+            ]
+          },
+          summary_after_second_compact,
           permissions_message,
           {
             "type": "message",
@@ -770,17 +781,6 @@ async fn compact_resume_after_second_compaction_preserves_history() {
               }
             ]
           },
-          {
-            "type": "message",
-            "role": "user",
-            "content": [
-              {
-                "type": "input_text",
-                "text": "AFTER_FORK"
-              }
-            ]
-          },
-          summary_after_second_compact,
           {
             "type": "message",
             "role": "user",
