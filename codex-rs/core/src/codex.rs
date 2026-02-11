@@ -3977,6 +3977,10 @@ pub(crate) async fn run_turn(
             .await;
         }
         PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
+            // Fallback pre-turn compaction excluded this turn's incoming items, so we need to
+            // attach a full canonical context snapshot directly above the incoming user prompt.
+            // We intentionally avoid replaying pre-turn diff items here, since they are derived
+            // against pre-compaction history and can be stale/duplicative after compaction.
             let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
             if !initial_context.is_empty() {
                 sess.record_conversation_items(&turn_context, &initial_context)
