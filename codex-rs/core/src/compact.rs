@@ -35,9 +35,28 @@ const COMPACT_USER_MESSAGE_MAX_TOKENS: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AutoCompactCallsite {
+    /// Pre-turn auto-compaction where the incoming turn context + user message are included in
+    /// the compaction request.
     PreTurnIncludingIncomingUserMessage,
+    /// Pre-turn fallback auto-compaction where compaction starts from the end of the previous
+    /// turn only, excluding incoming turn context + user message.
     PreTurnExcludingIncomingUserMessage,
+    /// Mid-turn compaction between assistant responses in a follow-up loop.
     MidTurnContinuation,
+}
+
+/// Controls whether compacted-history processing should reinsert canonical turn context.
+///
+/// This is intentionally independent from whether compaction input included incoming turn items.
+/// Pre-turn fallback compaction excludes incoming user/context from the compaction request and
+/// must also skip reinjection into pre-turn history, because `run_turn` appends fresh canonical
+/// context directly above the incoming user message after compaction completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TurnContextReinjection {
+    /// Insert canonical context immediately above the last real user message in compacted history.
+    ReinjectAboveLastRealUser,
+    /// Do not reinsert canonical context while processing compacted history.
+    Skip,
 }
 
 pub(crate) fn should_use_remote_compact_task(provider: &ModelProviderInfo) -> bool {
@@ -48,6 +67,7 @@ pub(crate) async fn run_inline_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     let prompt = turn_context.compact_prompt().to_string();
@@ -62,6 +82,7 @@ pub(crate) async fn run_inline_auto_compact_task(
         turn_context,
         input,
         Some(auto_compact_callsite),
+        turn_context_reinjection,
         incoming_items,
     )
     .await?;
@@ -79,8 +100,15 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    if let Err(err) =
-        run_compact_task_inner(sess.clone(), turn_context.clone(), input, None, None).await
+    if let Err(err) = run_compact_task_inner(
+        sess.clone(),
+        turn_context.clone(),
+        input,
+        None,
+        TurnContextReinjection::ReinjectAboveLastRealUser,
+        None,
+    )
+    .await
     {
         let event = EventMsg::Error(err.to_error_event(None));
         sess.send_event(&turn_context, event).await;
@@ -94,6 +122,7 @@ async fn run_compact_task_inner(
     turn_context: Arc<TurnContext>,
     input: Vec<UserInput>,
     auto_compact_callsite: Option<AutoCompactCallsite>,
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
@@ -240,7 +269,12 @@ async fn run_compact_task_inner(
         }
     }
 
-    let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
+    let initial_context = match turn_context_reinjection {
+        TurnContextReinjection::ReinjectAboveLastRealUser => {
+            sess.build_initial_context(turn_context.as_ref()).await
+        }
+        TurnContextReinjection::Skip => Vec::new(),
+    };
     let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
@@ -308,23 +342,32 @@ pub(crate) fn is_summary_message(message: &str) -> bool {
 pub(crate) fn process_compacted_history(
     mut compacted_history: Vec<ResponseItem>,
     initial_context: &[ResponseItem],
+    turn_context_reinjection: TurnContextReinjection,
 ) -> Vec<ResponseItem> {
+    // Keep only model-visible transcript items that we allow from remote compaction output.
     compacted_history.retain(should_keep_compacted_history_item);
+    // Keep any summary user messages at the tail so canonical context insertion can anchor on the
+    // last real user message in the conversation.
     move_summary_user_messages_to_end(&mut compacted_history);
 
-    if let Some(insertion_index) = find_turn_context_insertion_index(&compacted_history) {
-        compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
-    } else {
-        warn!(
-            compacted_history_len = compacted_history.len(),
-            "remote compacted history has no real user message; skipping automatic turn-context insertion"
-        );
+    if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
+        if let Some(insertion_index) = find_turn_context_insertion_index(&compacted_history) {
+            compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
+        } else {
+            warn!(
+                compacted_history_len = compacted_history.len(),
+                "remote compacted history has no real user message; skipping automatic turn-context insertion"
+            );
+        }
     }
 
     compacted_history
 }
 
 fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) {
+    // Remote compactors can interleave summary user messages throughout output. Keep relative
+    // ordering among non-summary items and move summaries to the tail to keep a stable "real user"
+    // anchor for reinsertion.
     let mut kept = Vec::with_capacity(compacted_history.len());
     let mut summaries = Vec::new();
     for item in compacted_history.drain(..) {
@@ -339,6 +382,8 @@ fn move_summary_user_messages_to_end(compacted_history: &mut Vec<ResponseItem>) 
 }
 
 fn find_turn_context_insertion_index(compacted_history: &[ResponseItem]) -> Option<usize> {
+    // Insert immediately above the last real user message so turn context applies to that user
+    // input rather than an earlier turn.
     compacted_history.iter().rposition(is_real_user_message)
 }
 
@@ -738,7 +783,11 @@ do things
             },
         ];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -847,7 +896,11 @@ keep me updated
             },
         ];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -983,7 +1036,11 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1048,7 +1105,11 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1122,7 +1183,11 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,
@@ -1176,7 +1241,11 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::Skip,
+        );
         let expected = vec![ResponseItem::Message {
             id: None,
             role: "user".to_string(),
@@ -1221,7 +1290,11 @@ keep me updated
             phase: None,
         }];
 
-        let refreshed = process_compacted_history(compacted_history, &initial_context);
+        let refreshed = process_compacted_history(
+            compacted_history,
+            &initial_context,
+            TurnContextReinjection::ReinjectAboveLastRealUser,
+        );
         let expected = vec![
             ResponseItem::Message {
                 id: None,

@@ -18,6 +18,7 @@ use crate::analytics_client::build_track_events_context;
 use crate::apps::render_apps_section;
 use crate::compact;
 use crate::compact::AutoCompactCallsite;
+use crate::compact::TurnContextReinjection;
 use crate::compact::run_inline_auto_compact_task;
 use crate::compact::should_use_remote_compact_task;
 use crate::compact_remote::run_inline_remote_auto_compact_task;
@@ -2189,9 +2190,17 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         compacted_history: Vec<ResponseItem>,
+        turn_context_reinjection: TurnContextReinjection,
     ) -> Vec<ResponseItem> {
+        // Session owns canonical context construction; compact module owns compacted-history
+        // shaping. Keep this as the seam so both local and remote compaction paths share the
+        // same reinjection semantics.
         let initial_context = self.build_initial_context(turn_context).await;
-        compact::process_compacted_history(compacted_history, &initial_context)
+        compact::process_compacted_history(
+            compacted_history,
+            &initial_context,
+            turn_context_reinjection,
+        )
     }
 
     /// Append ResponseItems to the in-memory conversation history only.
@@ -3965,7 +3974,8 @@ pub(crate) async fn run_turn(
     match pre_turn_compaction_outcome {
         PreTurnCompactionOutcome::CompactedWithIncomingItems => {
             // Incoming turn items were already part of pre-turn compaction input, and the
-            // user prompt is already in history after compaction. Emit lifecycle events only.
+            // user prompt is already persisted in history after compaction. Emit lifecycle events
+            // only so UI/consumers still observe a normal user turn item transition.
             let turn_item = TurnItem::UserMessage(UserMessageItem::new(&input));
             sess.emit_turn_item_started(turn_context.as_ref(), &turn_item)
                 .await;
@@ -3990,6 +4000,7 @@ pub(crate) async fn run_turn(
             // attach a full canonical context snapshot directly above the incoming user prompt.
             // We intentionally avoid replaying pre-turn diff items here, since they are derived
             // against pre-compaction history and can be stale/duplicative after compaction.
+            // Canonical context rebuild keeps model-visible state deterministic after fallback.
             let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
             if !initial_context.is_empty() {
                 sess.record_conversation_items(&turn_context, &initial_context)
@@ -4108,6 +4119,7 @@ pub(crate) async fn run_turn(
                         &sess,
                         &turn_context,
                         AutoCompactCallsite::MidTurnContinuation,
+                        TurnContextReinjection::ReinjectAboveLastRealUser,
                         None,
                     )
                     .await
@@ -4177,11 +4189,21 @@ pub(crate) async fn run_turn(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreTurnCompactionOutcome {
+    /// Pre-turn input fits without compaction.
     NotNeeded,
+    /// Pre-turn compaction succeeded with incoming turn context + user message included.
     CompactedWithIncomingItems,
+    /// Pre-turn fallback compaction succeeded without incoming items.
+    /// Caller must append canonical context + user message after compaction.
     CompactedWithoutIncomingItems,
 }
 
+/// Runs pre-turn auto-compaction with a two-step strategy:
+/// 1) compact with incoming turn context + user message included
+/// 2) on failure, compact from end-of-previous-turn history only
+///
+/// On step (2), caller-side turn assembly must append canonical context and the current user
+/// message after compaction so the latest message still has correct context directly above it.
 async fn run_pre_turn_auto_compaction_if_needed(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -4205,6 +4227,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
         sess,
         turn_context,
         AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
+        TurnContextReinjection::ReinjectAboveLastRealUser,
         Some(incoming_turn_items.to_vec()),
     )
     .await
@@ -4213,12 +4236,14 @@ async fn run_pre_turn_auto_compaction_if_needed(
         return Ok(PreTurnCompactionOutcome::CompactedWithIncomingItems);
     }
 
-    // Fallback: compact from the end of the previous turn, then append current turn context
-    // and user input in `run_turn`.
+    // Fallback: compact from the end of the previous turn only (no incoming user/context, and no
+    // turn-context reinjection into pre-turn history), then append canonical context + incoming
+    // user in `run_turn`.
     if run_auto_compact(
         sess,
         turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
+        TurnContextReinjection::Skip,
         None,
     )
     .await
@@ -4256,6 +4281,10 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    // Explicitly controls post-compaction transcript shaping; do not infer this from
+    // `incoming_items`, because pre-turn fallback excludes incoming items but still needs a
+    // distinct reinjection policy from other callsites.
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     let result = if should_use_remote_compact_task(&turn_context.provider) {
@@ -4263,6 +4292,7 @@ async fn run_auto_compact(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
+            turn_context_reinjection,
             incoming_items,
         )
         .await
@@ -4271,29 +4301,11 @@ async fn run_auto_compact(
             Arc::clone(sess),
             Arc::clone(turn_context),
             auto_compact_callsite,
+            turn_context_reinjection,
             incoming_items,
         )
         .await
     };
-
-    if result.is_ok() {
-        let auto_compact_limit = turn_context
-            .model_info
-            .auto_compact_token_limit()
-            .unwrap_or(i64::MAX);
-        let total_usage_tokens_after_compact = sess.get_total_token_usage().await;
-        if auto_compact_limit != i64::MAX && total_usage_tokens_after_compact >= auto_compact_limit
-        {
-            error!(
-                turn_id = %turn_context.sub_id,
-                auto_compact_callsite = ?auto_compact_callsite,
-                total_usage_tokens_after_compact,
-                auto_compact_limit,
-                "auto compaction succeeded but token usage is still above threshold"
-            );
-            return Err(CodexErr::ContextWindowExceeded);
-        }
-    }
 
     if let Err(err) = &result {
         error!(

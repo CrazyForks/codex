@@ -4,6 +4,7 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::compact::AutoCompactCallsite;
+use crate::compact::TurnContextReinjection;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
@@ -26,12 +27,16 @@ pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    // Controls whether canonical turn context should be reinserted into compacted history.
+    // Pre-turn fallback compaction explicitly passes `Skip`.
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     run_remote_compact_task_inner(
         &sess,
         &turn_context,
         auto_compact_callsite,
+        turn_context_reinjection,
         incoming_items,
         false,
     )
@@ -54,6 +59,9 @@ pub(crate) async fn run_remote_compact_task(
         &sess,
         &turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
+        // `/compact` is a manual compaction command, not pre-turn fallback; keep canonical
+        // reinjection behavior even though it reuses this callsite for logging.
+        TurnContextReinjection::ReinjectAboveLastRealUser,
         None,
         true,
     )
@@ -64,6 +72,7 @@ async fn run_remote_compact_task_inner(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
     emit_error_events: bool,
 ) -> CodexResult<()> {
@@ -71,6 +80,7 @@ async fn run_remote_compact_task_inner(
         sess,
         turn_context,
         auto_compact_callsite,
+        turn_context_reinjection,
         incoming_items,
     )
     .await
@@ -96,6 +106,7 @@ async fn run_remote_compact_task_inner_impl(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
+    turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
@@ -160,7 +171,7 @@ async fn run_remote_compact_task_inner_impl(
         })
         .await?;
     new_history = sess
-        .process_compacted_history(turn_context, new_history)
+        .process_compacted_history(turn_context, new_history, turn_context_reinjection)
         .await;
 
     if !ghost_snapshots.is_empty() {
