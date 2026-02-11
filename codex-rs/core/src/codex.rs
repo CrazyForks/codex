@@ -3985,46 +3985,15 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    match pre_turn_persistence_mode(pre_turn_compaction_outcome) {
-        PreTurnPersistenceMode::EmitLifecycleOnly => {
-            // Incoming turn items were already part of pre-turn compaction input, and the
-            // user prompt is already persisted in history after compaction. Emit lifecycle events
-            // only so UI/consumers still observe a normal user turn item transition.
-            let turn_item = TurnItem::UserMessage(UserMessageItem::new(&input));
-            sess.emit_turn_item_started(turn_context.as_ref(), &turn_item)
-                .await;
-            sess.emit_turn_item_completed(turn_context.as_ref(), turn_item)
-                .await;
-            sess.ensure_rollout_materialized().await;
-        }
-        PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt => {
-            if !pre_turn_context_items.is_empty() {
-                sess.record_conversation_items(&turn_context, &pre_turn_context_items)
-                    .await;
-            }
-            sess.record_user_prompt_and_emit_turn_item(
-                turn_context.as_ref(),
-                &input,
-                response_item,
-            )
-            .await;
-        }
-        PreTurnPersistenceMode::RecordInitialContextAndPrompt => {
-            // Reserved path for future models that compact pre-turn history without incoming turn
-            // items; reseed canonical initial context above the incoming user message.
-            let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
-            if !initial_context.is_empty() {
-                sess.record_conversation_items(&turn_context, &initial_context)
-                    .await;
-            }
-            sess.record_user_prompt_and_emit_turn_item(
-                turn_context.as_ref(),
-                &input,
-                response_item,
-            )
-            .await;
-        }
-    }
+    persist_pre_turn_items_for_outcome(
+        &sess,
+        &turn_context,
+        pre_turn_compaction_outcome,
+        &pre_turn_context_items,
+        &input,
+        response_item,
+    )
+    .await;
 
     if !skill_items.is_empty() {
         sess.record_conversation_items(&turn_context, &skill_items)
@@ -4226,6 +4195,48 @@ fn pre_turn_persistence_mode(outcome: PreTurnCompactionOutcome) -> PreTurnPersis
         PreTurnCompactionOutcome::NotNeeded => PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt,
         PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
             PreTurnPersistenceMode::RecordInitialContextAndPrompt
+        }
+    }
+}
+
+async fn persist_pre_turn_items_for_outcome(
+    sess: &Arc<Session>,
+    turn_context: &Arc<TurnContext>,
+    outcome: PreTurnCompactionOutcome,
+    pre_turn_context_items: &[ResponseItem],
+    input: &[UserInput],
+    response_item: ResponseItem,
+) {
+    match pre_turn_persistence_mode(outcome) {
+        PreTurnPersistenceMode::EmitLifecycleOnly => {
+            // Incoming turn items were already part of pre-turn compaction input, and the
+            // user prompt is already persisted in history after compaction. Emit lifecycle events
+            // only so UI/consumers still observe a normal user turn item transition.
+            let turn_item = TurnItem::UserMessage(UserMessageItem::new(input));
+            sess.emit_turn_item_started(turn_context.as_ref(), &turn_item)
+                .await;
+            sess.emit_turn_item_completed(turn_context.as_ref(), turn_item)
+                .await;
+            sess.ensure_rollout_materialized().await;
+        }
+        PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt => {
+            if !pre_turn_context_items.is_empty() {
+                sess.record_conversation_items(turn_context, pre_turn_context_items)
+                    .await;
+            }
+            sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), input, response_item)
+                .await;
+        }
+        PreTurnPersistenceMode::RecordInitialContextAndPrompt => {
+            // Reserved path for future models that compact pre-turn history without incoming turn
+            // items; reseed canonical initial context above the incoming user message.
+            let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
+            if !initial_context.is_empty() {
+                sess.record_conversation_items(turn_context, &initial_context)
+                    .await;
+            }
+            sess.record_user_prompt_and_emit_turn_item(turn_context.as_ref(), input, response_item)
+                .await;
         }
     }
 }
@@ -5446,6 +5457,76 @@ mod tests {
             pre_turn_persistence_mode(PreTurnCompactionOutcome::CompactedWithoutIncomingItems),
             PreTurnPersistenceMode::RecordInitialContextAndPrompt
         );
+    }
+
+    #[tokio::test]
+    async fn compacted_without_incoming_items_records_initial_context_and_prompt() {
+        let (session, turn_context) = make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+        let input = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let response_item: ResponseItem = ResponseInputItem::from(input.clone()).into();
+        let stale_pre_turn_context_items = vec![ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "stale context diff".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }];
+
+        persist_pre_turn_items_for_outcome(
+            &session,
+            &turn_context,
+            PreTurnCompactionOutcome::CompactedWithoutIncomingItems,
+            &stale_pre_turn_context_items,
+            &input,
+            response_item.clone(),
+        )
+        .await;
+
+        let mut expected = session.build_initial_context(turn_context.as_ref()).await;
+        expected.push(response_item);
+        let actual = session.clone_history().await.raw_items().to_vec();
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn compacted_with_incoming_items_emits_lifecycle_without_history_writes() {
+        let (session, turn_context) = make_session_and_context().await;
+        let session = Arc::new(session);
+        let turn_context = Arc::new(turn_context);
+        let input = vec![UserInput::Text {
+            text: "hello".to_string(),
+            text_elements: Vec::new(),
+        }];
+        let response_item: ResponseItem = ResponseInputItem::from(input.clone()).into();
+        let stale_pre_turn_context_items = vec![ResponseItem::Message {
+            id: None,
+            role: "developer".to_string(),
+            content: vec![ContentItem::InputText {
+                text: "stale context diff".to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }];
+
+        persist_pre_turn_items_for_outcome(
+            &session,
+            &turn_context,
+            PreTurnCompactionOutcome::CompactedWithIncomingItems,
+            &stale_pre_turn_context_items,
+            &input,
+            response_item,
+        )
+        .await;
+
+        let actual = session.clone_history().await.raw_items().to_vec();
+        assert_eq!(actual, Vec::<ResponseItem>::new());
     }
 
     #[test]
