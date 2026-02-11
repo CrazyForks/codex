@@ -1,8 +1,8 @@
 ---
 source: core/tests/suite/compact.rs
-expression: "sectioned_request_shapes(&[(\"Local Post-Compaction History Request\",\n&requests[0]),])"
+expression: "sectioned_request_shapes(&[(\"Local Post-Compaction History\", &requests[0]),])"
 ---
-## Local Post-Compaction History Request
+## Local Post-Compaction History
 00:message/developer:<PERMISSIONS_INSTRUCTIONS>
 01:message/user:<AGENTS_MD>
 02:message/user:<ENVIRONMENT_CONTEXT>

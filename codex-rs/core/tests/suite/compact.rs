@@ -2879,7 +2879,7 @@ async fn snapshot_request_shape_manual_compact_without_previous_user_messages() 
     let follow_up_shape = request_input_shape(&requests[0]);
     insta::assert_snapshot!(
         "manual_compact_without_prev_user_shapes",
-        sectioned_request_shapes(&[("Local Post-Compaction History Request", &requests[0]),])
+        sectioned_request_shapes(&[("Local Post-Compaction History", &requests[0]),])
     );
     assert!(
         !follow_up_shape.contains("<SUMMARY:MANUAL_EMPTY_SUMMARY>"),
