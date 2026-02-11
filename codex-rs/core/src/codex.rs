@@ -3895,9 +3895,19 @@ pub(crate) async fn run_turn(
     .await
     {
         Ok(outcome) => outcome,
-        Err(message) => {
+        Err(PreTurnCompactionError::IncomingItemsTooLarge {
+            incoming_items_tokens_estimate,
+        }) => {
+            let message = format!(
+                "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
+            );
             let event =
                 EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(Some(message)));
+            sess.send_event(&turn_context, event).await;
+            return None;
+        }
+        Err(PreTurnCompactionError::CompactionFailed(err)) => {
+            let event = EventMsg::Error(err.to_error_event(None));
             sess.send_event(&turn_context, event).await;
             return None;
         }
@@ -4200,6 +4210,12 @@ enum PreTurnCompactionOutcome {
     CompactedWithoutIncomingItems,
 }
 
+#[derive(Debug)]
+enum PreTurnCompactionError {
+    IncomingItemsTooLarge { incoming_items_tokens_estimate: i64 },
+    CompactionFailed(CodexErr),
+}
+
 /// Runs pre-turn auto-compaction with a two-step strategy:
 /// 1) compact with incoming turn context + user message included
 /// 2) on failure, compact from end-of-previous-turn history only
@@ -4211,7 +4227,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     turn_context: &Arc<TurnContext>,
     auto_compact_limit: i64,
     incoming_turn_items: &[ResponseItem],
-) -> Result<PreTurnCompactionOutcome, String> {
+) -> Result<PreTurnCompactionOutcome, PreTurnCompactionError> {
     let total_usage_tokens = sess.get_total_token_usage().await;
     let incoming_items_tokens_estimate = incoming_turn_items
         .iter()
@@ -4241,27 +4257,29 @@ async fn run_pre_turn_auto_compaction_if_needed(
     // Fallback: compact from the end of the previous turn only (no incoming user/context, and no
     // turn-context reinjection into pre-turn history), then append canonical context + incoming
     // user in `run_turn`.
-    if run_auto_compact(
+    let fallback_result = run_auto_compact(
         sess,
         turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
         TurnContextReinjection::Skip,
         None,
     )
-    .await
-    .is_err()
-    {
-        error!(
-            turn_id = %turn_context.sub_id,
-            auto_compact_callsite = ?AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
-            incoming_items_tokens_estimate,
-            auto_compact_limit,
-            reason = "pre-turn fallback compaction without incoming items failed",
-            "incoming user/context is too large for pre-turn auto-compaction flow"
-        );
-        return Err(format!(
-            "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
-        ));
+    .await;
+    if let Err(err) = fallback_result {
+        if matches!(err, CodexErr::ContextWindowExceeded) {
+            error!(
+                turn_id = %turn_context.sub_id,
+                auto_compact_callsite = ?AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
+                incoming_items_tokens_estimate,
+                auto_compact_limit,
+                reason = "pre-turn fallback compaction without incoming items exceeded context window",
+                "incoming user/context is too large for pre-turn auto-compaction flow"
+            );
+            return Err(PreTurnCompactionError::IncomingItemsTooLarge {
+                incoming_items_tokens_estimate,
+            });
+        }
+        return Err(PreTurnCompactionError::CompactionFailed(err));
     }
 
     Ok(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)

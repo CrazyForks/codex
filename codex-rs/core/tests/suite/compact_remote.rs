@@ -697,8 +697,15 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     assert!(
-        error_message.contains("Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction"),
-        "expected compact failure error, got {error_message}"
+        !error_message.contains(
+            "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction"
+        ),
+        "non-context fallback failures should surface real error messages, got {error_message}"
+    );
+    assert!(
+        error_message.contains("invalid compact payload shape")
+            || error_message.contains("invalid type: string"),
+        "expected remote compact parse failure to surface, got {error_message}"
     );
     assert_eq!(
         first_compact_mock.requests().len(),
