@@ -3895,9 +3895,11 @@ pub(crate) async fn run_turn(
     .await
     {
         Ok(outcome) => outcome,
-        Err(PreTurnCompactionError::IncomingItemsTooLarge {
-            incoming_items_tokens_estimate,
-        }) => {
+        Err(err) if matches!(err, CodexErr::ContextWindowExceeded) => {
+            let incoming_items_tokens_estimate = incoming_turn_items
+                .iter()
+                .map(estimate_item_token_count)
+                .fold(0_i64, i64::saturating_add);
             let message = format!(
                 "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction. Please reduce the size of your message and try again. (incoming_items_tokens_estimate={incoming_items_tokens_estimate})"
             );
@@ -3906,7 +3908,7 @@ pub(crate) async fn run_turn(
             sess.send_event(&turn_context, event).await;
             return None;
         }
-        Err(PreTurnCompactionError::CompactionFailed(err)) => {
+        Err(err) => {
             let event = EventMsg::Error(err.to_error_event(None));
             sess.send_event(&turn_context, event).await;
             return None;
@@ -4210,12 +4212,6 @@ enum PreTurnCompactionOutcome {
     CompactedWithoutIncomingItems,
 }
 
-#[derive(Debug)]
-enum PreTurnCompactionError {
-    IncomingItemsTooLarge { incoming_items_tokens_estimate: i64 },
-    CompactionFailed(CodexErr),
-}
-
 /// Runs pre-turn auto-compaction with a two-step strategy:
 /// 1) compact with incoming turn context + user message included
 /// 2) on failure, compact from end-of-previous-turn history only
@@ -4227,7 +4223,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
     turn_context: &Arc<TurnContext>,
     auto_compact_limit: i64,
     incoming_turn_items: &[ResponseItem],
-) -> Result<PreTurnCompactionOutcome, PreTurnCompactionError> {
+) -> CodexResult<PreTurnCompactionOutcome> {
     let total_usage_tokens = sess.get_total_token_usage().await;
     let incoming_items_tokens_estimate = incoming_turn_items
         .iter()
@@ -4275,11 +4271,9 @@ async fn run_pre_turn_auto_compaction_if_needed(
                 reason = "pre-turn fallback compaction without incoming items exceeded context window",
                 "incoming user/context is too large for pre-turn auto-compaction flow"
             );
-            return Err(PreTurnCompactionError::IncomingItemsTooLarge {
-                incoming_items_tokens_estimate,
-            });
+            return Err(CodexErr::ContextWindowExceeded);
         }
-        return Err(PreTurnCompactionError::CompactionFailed(err));
+        return Err(err);
     }
 
     Ok(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
