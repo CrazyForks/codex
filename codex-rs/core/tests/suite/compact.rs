@@ -455,8 +455,15 @@ async fn manual_compact_uses_custom_prompt() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
-    let sse_stream = sse(vec![ev_completed("r1")]);
-    let response_mock = mount_sse_once(&server, sse_stream).await;
+    let first_turn = sse(vec![
+        ev_assistant_message("m0", FIRST_REPLY),
+        ev_completed_with_tokens("r0", 80),
+    ]);
+    let compact_turn = sse(vec![
+        ev_assistant_message("m1", SUMMARY_TEXT),
+        ev_completed_with_tokens("r1", 100),
+    ]);
+    let request_log = mount_sse_sequence(&server, vec![first_turn, compact_turn]).await;
 
     let custom_prompt = "Use this compact prompt instead";
 
@@ -471,6 +478,18 @@ async fn manual_compact_uses_custom_prompt() {
         .expect("create conversation")
         .codex;
 
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "USER_ONE".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await
+        .expect("submit first user turn");
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
     codex.submit(Op::Compact).await.expect("trigger compact");
     let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
     let EventMsg::Warning(WarningEvent { message }) = warning_event else {
@@ -479,7 +498,13 @@ async fn manual_compact_uses_custom_prompt() {
     assert_eq!(message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    let body = response_mock.single_request().body_json();
+    let requests = request_log.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "expected first turn and compact requests"
+    );
+    let body = requests[1].body_json();
 
     let input = body
         .get("input")
@@ -522,6 +547,10 @@ async fn manual_compact_emits_api_and_local_token_usage_events() {
 
     let server = start_mock_server().await;
 
+    let sse_first_turn = sse(vec![
+        ev_assistant_message("m0", FIRST_REPLY),
+        ev_completed_with_tokens("r0", 80),
+    ]);
     // Compact run where the API reports zero tokens in usage. Our local
     // estimator should still compute a non-zero context size for the compacted
     // history.
@@ -529,7 +558,7 @@ async fn manual_compact_emits_api_and_local_token_usage_events() {
         ev_assistant_message("m1", SUMMARY_TEXT),
         ev_completed_with_tokens("r1", 0),
     ]);
-    mount_sse_once(&server, sse_compact).await;
+    mount_sse_sequence(&server, vec![sse_first_turn, sse_compact]).await;
 
     let model_provider = non_openai_model_provider(&server);
     let mut builder = test_codex().with_config(move |config| {
@@ -538,39 +567,41 @@ async fn manual_compact_emits_api_and_local_token_usage_events() {
     });
     let codex = builder.build(&server).await.unwrap().codex;
 
-    // Trigger manual compact and collect TokenCount events for the compact turn.
-    codex.submit(Op::Compact).await.unwrap();
-
-    // First TokenCount: from the compact API call (usage.total_tokens = 0).
-    let first = wait_for_event_match(&codex, |ev| match ev {
-        EventMsg::TokenCount(tc) => tc
-            .info
-            .as_ref()
-            .map(|info| info.last_token_usage.total_tokens),
-        _ => None,
-    })
-    .await;
-
-    // Second TokenCount: from the local post-compaction estimate.
-    let last = wait_for_event_match(&codex, |ev| match ev {
-        EventMsg::TokenCount(tc) => tc
-            .info
-            .as_ref()
-            .map(|info| info.last_token_usage.total_tokens),
-        _ => None,
-    })
-    .await;
-
-    // Ensure the compact task itself completes.
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "USER_ONE".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await
+        .unwrap();
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    assert_eq!(
-        first, 0,
-        "expected first TokenCount from compact API usage to be zero"
+    // Trigger manual compact and collect TokenCount events for the compact turn.
+    codex.submit(Op::Compact).await.unwrap();
+    let mut token_totals = Vec::new();
+    loop {
+        let event = wait_for_event(&codex, |_| true).await;
+        match event {
+            EventMsg::TokenCount(tc) => {
+                if let Some(info) = tc.info {
+                    token_totals.push(info.last_token_usage.total_tokens);
+                }
+            }
+            EventMsg::TurnComplete(_) => break,
+            _ => {}
+        }
+    }
+
+    assert!(
+        token_totals.contains(&0),
+        "expected compact turn to emit TokenCount usage.total_tokens = 0"
     );
     assert!(
-        last > 0,
-        "second TokenCount should reflect a non-zero estimated context size after compaction"
+        token_totals.iter().any(|total| *total > 0),
+        "expected compact turn to emit non-zero estimated local context size after compaction"
     );
 }
 
