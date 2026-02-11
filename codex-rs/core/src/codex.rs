@@ -3985,8 +3985,8 @@ pub(crate) async fn run_turn(
             .await;
     }
 
-    match pre_turn_compaction_outcome {
-        PreTurnCompactionOutcome::CompactedWithIncomingItems => {
+    match pre_turn_persistence_mode(pre_turn_compaction_outcome) {
+        PreTurnPersistenceMode::EmitLifecycleOnly => {
             // Incoming turn items were already part of pre-turn compaction input, and the
             // user prompt is already persisted in history after compaction. Emit lifecycle events
             // only so UI/consumers still observe a normal user turn item transition.
@@ -3997,9 +3997,24 @@ pub(crate) async fn run_turn(
                 .await;
             sess.ensure_rollout_materialized().await;
         }
-        PreTurnCompactionOutcome::NotNeeded => {
+        PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt => {
             if !pre_turn_context_items.is_empty() {
                 sess.record_conversation_items(&turn_context, &pre_turn_context_items)
+                    .await;
+            }
+            sess.record_user_prompt_and_emit_turn_item(
+                turn_context.as_ref(),
+                &input,
+                response_item,
+            )
+            .await;
+        }
+        PreTurnPersistenceMode::RecordInitialContextAndPrompt => {
+            // Reserved path for future models that compact pre-turn history without incoming turn
+            // items; reseed canonical initial context above the incoming user message.
+            let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
+            if !initial_context.is_empty() {
+                sess.record_conversation_items(&turn_context, &initial_context)
                     .await;
             }
             sess.record_user_prompt_and_emit_turn_item(
@@ -4189,6 +4204,30 @@ enum PreTurnCompactionOutcome {
     NotNeeded,
     /// Pre-turn compaction succeeded with incoming turn context + user message included.
     CompactedWithIncomingItems,
+    /// Reserved strategy: pre-turn compaction succeeded without incoming turn items.
+    /// In this mode, caller appends canonical initial context directly above the incoming user
+    /// message after compaction.
+    #[allow(dead_code)]
+    CompactedWithoutIncomingItems,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreTurnPersistenceMode {
+    EmitLifecycleOnly,
+    RecordPreTurnItemsAndPrompt,
+    RecordInitialContextAndPrompt,
+}
+
+fn pre_turn_persistence_mode(outcome: PreTurnCompactionOutcome) -> PreTurnPersistenceMode {
+    match outcome {
+        PreTurnCompactionOutcome::CompactedWithIncomingItems => {
+            PreTurnPersistenceMode::EmitLifecycleOnly
+        }
+        PreTurnCompactionOutcome::NotNeeded => PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt,
+        PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
+            PreTurnPersistenceMode::RecordInitialContextAndPrompt
+        }
+    }
 }
 
 /// Runs pre-turn auto-compaction with incoming turn context + user message included.
@@ -5391,6 +5430,22 @@ mod tests {
         assert!(!is_projected_submission_over_auto_compact_limit(
             80, 10, 100
         ));
+    }
+
+    #[test]
+    fn pre_turn_persistence_mode_maps_all_outcomes() {
+        assert_eq!(
+            pre_turn_persistence_mode(PreTurnCompactionOutcome::NotNeeded),
+            PreTurnPersistenceMode::RecordPreTurnItemsAndPrompt
+        );
+        assert_eq!(
+            pre_turn_persistence_mode(PreTurnCompactionOutcome::CompactedWithIncomingItems),
+            PreTurnPersistenceMode::EmitLifecycleOnly
+        );
+        assert_eq!(
+            pre_turn_persistence_mode(PreTurnCompactionOutcome::CompactedWithoutIncomingItems),
+            PreTurnPersistenceMode::RecordInitialContextAndPrompt
+        );
     }
 
     #[test]
