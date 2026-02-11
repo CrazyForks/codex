@@ -40,6 +40,8 @@ impl SessionTask for CompactTask {
                 );
                 session.send_event(&ctx, event).await;
             } else {
+                // Manual `/compact` rewrites history to compacted transcript items and drops
+                // per-turn context entries. Force initial-context reseeding on the next user turn.
                 session.mark_initial_context_unseeded_for_next_turn().await;
             }
         } else {
@@ -56,6 +58,8 @@ impl SessionTask for CompactTask {
                 );
                 session.send_event(&ctx, event).await;
             } else {
+                // Manual `/compact` rewrites history to compacted transcript items and drops
+                // per-turn context entries. Force initial-context reseeding on the next user turn.
                 session.mark_initial_context_unseeded_for_next_turn().await;
             }
         }
