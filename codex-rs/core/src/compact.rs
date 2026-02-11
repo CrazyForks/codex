@@ -340,20 +340,24 @@ pub(crate) fn process_compacted_history(
     // Keep only model-visible transcript items that we allow from remote compaction output.
     compacted_history.retain(should_keep_compacted_history_item);
 
-    if turn_context_reinjection == TurnContextReinjection::ReinjectAboveLastRealUser {
-        // Insert immediately above the last real user message so turn context applies to that
-        // user input rather than an earlier turn.
-        if let Some(insertion_index) = compacted_history
-            .iter()
-            .rposition(|item| real_user_message_text(item).is_some())
-        {
-            compacted_history.splice(insertion_index..insertion_index, initial_context.to_vec());
-        } else {
-            warn!(
-                compacted_history_len = compacted_history.len(),
-                "remote compacted history has no real user message; skipping automatic turn-context insertion"
-            );
+    match turn_context_reinjection {
+        TurnContextReinjection::ReinjectAboveLastRealUser => {
+            // Insert immediately above the last real user message so turn context applies to that
+            // user input rather than an earlier turn.
+            if let Some(insertion_index) = compacted_history
+                .iter()
+                .rposition(|item| real_user_message_text(item).is_some())
+            {
+                compacted_history
+                    .splice(insertion_index..insertion_index, initial_context.to_vec());
+            } else {
+                warn!(
+                    compacted_history_len = compacted_history.len(),
+                    "remote compacted history has no real user message; skipping automatic turn-context insertion"
+                );
+            }
         }
+        TurnContextReinjection::Skip => {}
     }
 
     compacted_history
