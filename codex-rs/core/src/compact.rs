@@ -104,7 +104,7 @@ pub(crate) async fn run_compact_task(
         turn_context,
         input,
         None,
-        TurnContextReinjection::ReinjectAboveLastRealUser,
+        TurnContextReinjection::Skip,
         None,
     )
     .await

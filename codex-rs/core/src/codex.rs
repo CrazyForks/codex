@@ -2247,6 +2247,11 @@ impl Session {
         self.flush_rollout().await;
     }
 
+    pub(crate) async fn mark_initial_context_unseeded_for_next_turn(&self) {
+        let mut state = self.state.lock().await;
+        state.initial_context_seeded = false;
+    }
+
     async fn persist_rollout_response_items(&self, items: &[ResponseItem]) {
         let rollout_items: Vec<RolloutItem> = items
             .iter()

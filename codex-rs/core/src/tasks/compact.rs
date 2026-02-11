@@ -39,6 +39,8 @@ impl SessionTask for CompactTask {
                     err.to_error_event(Some("Error running remote compact task".to_string())),
                 );
                 session.send_event(&ctx, event).await;
+            } else {
+                session.mark_initial_context_unseeded_for_next_turn().await;
             }
         } else {
             let _ = session.services.otel_manager.counter(
@@ -53,6 +55,8 @@ impl SessionTask for CompactTask {
                     err.to_error_event(Some("Error running local compact task".to_string())),
                 );
                 session.send_event(&ctx, event).await;
+            } else {
+                session.mark_initial_context_unseeded_for_next_turn().await;
             }
         }
 

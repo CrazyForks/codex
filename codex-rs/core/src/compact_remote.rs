@@ -57,9 +57,9 @@ pub(crate) async fn run_remote_compact_task(
         &sess,
         &turn_context,
         AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
-        // `/compact` is a manual compaction command, not pre-turn fallback; keep canonical
-        // reinjection behavior even though it reuses this callsite for logging.
-        TurnContextReinjection::ReinjectAboveLastRealUser,
+        // Manual `/compact` should not reinsert turn context into compacted history; we reseed
+        // canonical initial context before the next user turn.
+        TurnContextReinjection::Skip,
         None,
     )
     .await

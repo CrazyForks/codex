@@ -1960,14 +1960,26 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
         .unwrap_or_else(|| panic!("final turn request missing for {final_user_message}"))
         .input()
         .into_iter()
+        .filter(|item| {
+            let role = item
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let text = item
+                .get("content")
+                .and_then(|v| v.as_array())
+                .and_then(|v| v.first())
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if role == "developer" {
+                return false;
+            }
+            !(text.starts_with("# AGENTS.md instructions for ")
+                || text.starts_with("<environment_context>")
+                || text.starts_with("<turn_aborted>"))
+        })
         .collect::<VecDeque<_>>();
-
-    // Permissions developer message
-    final_output.pop_front();
-    // User instructions (project docs/skills)
-    final_output.pop_front();
-    // Environment context
-    final_output.pop_front();
 
     let _ = final_output
         .iter_mut()
