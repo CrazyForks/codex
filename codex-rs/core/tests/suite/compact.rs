@@ -2615,11 +2615,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
         .expect("build codex")
         .codex;
 
-    for user in [
-        "PRE_TURN_USER_ONE",
-        "PRE_TURN_USER_TWO",
-        "PRE_TURN_USER_THREE",
-    ] {
+    for user in ["USER_ONE", "USER_TWO", "USER_THREE"] {
         codex
             .submit(Op::UserInput {
                 items: vec![UserInput::Text {
@@ -2650,7 +2646,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
         "expected compact request to include summarization prompt"
     );
     assert!(
-        compact_shape.contains("PRE_TURN_USER_THREE"),
+        compact_shape.contains("USER_THREE"),
         "expected compact request to include incoming user message"
     );
     assert!(
@@ -2705,7 +2701,7 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
-                text: "FALLBACK_USER_ONE".to_string(),
+                text: "USER_ONE".to_string(),
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
@@ -2717,7 +2713,7 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
-                text: "FALLBACK_USER_TWO".to_string(),
+                text: "USER_TWO".to_string(),
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
@@ -2752,15 +2748,15 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
     );
 
     assert!(
-        include_attempt_shape.contains("FALLBACK_USER_TWO"),
+        include_attempt_shape.contains("USER_TWO"),
         "first pre-turn attempt should include incoming user message"
     );
     assert!(
-        !fallback_attempt_shape.contains("FALLBACK_USER_TWO"),
+        !fallback_attempt_shape.contains("USER_TWO"),
         "fallback pre-turn attempt should exclude incoming user message"
     );
     assert!(
-        follow_up_shape.contains("FALLBACK_USER_TWO"),
+        follow_up_shape.contains("USER_TWO"),
         "post-fallback turn request should include incoming user message"
     );
 }
@@ -2804,7 +2800,7 @@ async fn snapshot_request_shape_mid_turn_continuation_compaction() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
-                text: "MID_TURN_USER".to_string(),
+                text: "USER_ONE".to_string(),
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
@@ -2942,7 +2938,7 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
-                text: "MANUAL_WITH_HISTORY_USER_ONE".to_string(),
+                text: "USER_ONE".to_string(),
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
@@ -2957,7 +2953,7 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
     codex
         .submit(Op::UserInput {
             items: vec![UserInput::Text {
-                text: "MANUAL_WITH_HISTORY_USER_TWO".to_string(),
+                text: "USER_TWO".to_string(),
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
@@ -2979,7 +2975,7 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
         ])
     );
     assert!(
-        compact_shape.contains("MANUAL_WITH_HISTORY_USER_ONE"),
+        compact_shape.contains("USER_ONE"),
         "manual compact request should include existing user history"
     );
     assert!(
@@ -2991,7 +2987,7 @@ async fn snapshot_request_shape_manual_compact_with_previous_user_messages() {
         "post-compact request should include compact summary"
     );
     assert!(
-        follow_up_shape.contains("MANUAL_WITH_HISTORY_USER_TWO"),
+        follow_up_shape.contains("USER_TWO"),
         "post-compact request should include the latest user message"
     );
 }
