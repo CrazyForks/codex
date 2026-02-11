@@ -4266,7 +4266,7 @@ async fn run_pre_turn_auto_compaction_if_needed(
                 auto_compact_callsite = ?AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
                 incoming_items_tokens_estimate,
                 auto_compact_limit,
-                reason = "pre-turn compaction including incoming items exceeded context window",
+                reason = "pre-turn compaction exceeded context window",
                 "incoming user/context is too large for pre-turn auto-compaction flow"
             );
         }
