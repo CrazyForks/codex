@@ -114,8 +114,10 @@ async fn run_remote_compact_task_inner_impl(
         history.record_items(incoming_items.iter(), turn_context.truncation_policy);
     }
     if !history.raw_items().iter().any(is_user_turn_boundary) {
-        // Initial context without any associated user turn should not be compacted on its own.
-        history.replace(Vec::new());
+        // Nothing to compact: do not rewrite history when there is no user-turn boundary.
+        sess.emit_turn_item_completed(turn_context, compaction_item)
+            .await;
+        return Ok(());
     }
     if deleted_items > 0 {
         info!(

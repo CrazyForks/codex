@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::SessionTask;
 use super::SessionTaskContext;
 use crate::codex::TurnContext;
+use crate::context_manager::is_user_turn_boundary;
 use crate::protocol::EventMsg;
 use crate::state::TaskKind;
 use async_trait::async_trait;
@@ -26,6 +27,12 @@ impl SessionTask for CompactTask {
         _cancellation_token: CancellationToken,
     ) -> Option<String> {
         let session = session.clone_session();
+        let has_user_turn_boundary = session
+            .clone_history()
+            .await
+            .raw_items()
+            .iter()
+            .any(is_user_turn_boundary);
         if crate::compact::should_use_remote_compact_task(&ctx.provider) {
             let _ = session.services.otel_manager.counter(
                 "codex.task.compact",
@@ -39,7 +46,7 @@ impl SessionTask for CompactTask {
                     err.to_error_event(Some("Error running remote compact task".to_string())),
                 );
                 session.send_event(&ctx, event).await;
-            } else {
+            } else if has_user_turn_boundary {
                 // Manual `/compact` rewrites history to compacted transcript items and drops
                 // per-turn context entries. Force initial-context reseeding on the next user turn.
                 session.mark_initial_context_unseeded_for_next_turn().await;
@@ -57,7 +64,7 @@ impl SessionTask for CompactTask {
                     err.to_error_event(Some("Error running local compact task".to_string())),
                 );
                 session.send_event(&ctx, event).await;
-            } else {
+            } else if has_user_turn_boundary {
                 // Manual `/compact` rewrites history to compacted transcript items and drops
                 // per-turn context entries. Force initial-context reseeding on the next user turn.
                 session.mark_initial_context_unseeded_for_next_turn().await;
