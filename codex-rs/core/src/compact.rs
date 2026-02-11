@@ -38,8 +38,10 @@ pub(crate) enum AutoCompactCallsite {
     /// Pre-turn auto-compaction where the incoming turn context + user message are included in
     /// the compaction request.
     PreTurnIncludingIncomingUserMessage,
-    /// Pre-turn fallback auto-compaction where compaction starts from the end of the previous
-    /// turn only, excluding incoming turn context + user message.
+    /// Reserved pre-turn auto-compaction strategy that compacts from the end of the previous turn
+    /// only, excluding incoming turn context + user message. This is currently unused by the
+    /// default pre-turn flow and retained for future model-specific strategies.
+    #[allow(dead_code)]
     PreTurnExcludingIncomingUserMessage,
     /// Mid-turn compaction between assistant responses in a follow-up loop.
     MidTurnContinuation,
@@ -47,9 +49,8 @@ pub(crate) enum AutoCompactCallsite {
 
 /// Controls whether compacted-history processing should reinsert canonical turn context.
 ///
-/// Pre-turn fallback compaction excludes incoming user/context from the compaction request and
-/// must also skip reinjection into pre-turn history, because `run_turn` appends fresh canonical
-/// context directly above the incoming user message after compaction completes.
+/// When callers exclude incoming user/context from the compaction request, they should typically
+/// set reinjection to `Skip` and append canonical context together with the next user message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TurnContextReinjection {
     /// Insert canonical context immediately above the last real user message in compacted history.

@@ -654,11 +654,6 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
         serde_json::json!({ "output": "invalid compact payload shape" }),
     )
     .await;
-    let second_compact_mock = responses::mount_compact_json_once(
-        harness.server(),
-        serde_json::json!({ "output": "invalid compact payload shape" }),
-    )
-    .await;
     let post_compact_turn_mock = mount_sse_once(
         harness.server(),
         sse(vec![
@@ -700,7 +695,7 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
         !error_message.contains(
             "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction"
         ),
-        "non-context fallback failures should surface real error messages, got {error_message}"
+        "non-context compaction failures should surface real error messages, got {error_message}"
     );
     assert!(
         error_message.contains("invalid compact payload shape")
@@ -711,11 +706,6 @@ async fn auto_remote_compact_failure_stops_agent_loop() -> Result<()> {
         first_compact_mock.requests().len(),
         1,
         "expected first remote compact attempt with incoming items"
-    );
-    assert_eq!(
-        second_compact_mock.requests().len(),
-        1,
-        "expected second remote compact attempt without incoming items"
     );
     assert!(
         post_compact_turn_mock.requests().is_empty(),
@@ -1510,7 +1500,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_including_incoming_us
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_request_shape_remote_pre_turn_fallback_compaction_excluding_incoming_user_message()
+async fn snapshot_request_shape_remote_pre_turn_compaction_failure_stops_without_retry()
 -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -1526,16 +1516,10 @@ async fn snapshot_request_shape_remote_pre_turn_fallback_compaction_excluding_in
 
     let responses_mock = responses::mount_sse_sequence(
         harness.server(),
-        vec![
-            responses::sse(vec![
-                responses::ev_assistant_message("m1", "REMOTE_FIRST_REPLY"),
-                responses::ev_completed_with_tokens("r1", 500),
-            ]),
-            responses::sse(vec![
-                responses::ev_assistant_message("m2", "REMOTE_FALLBACK_FINAL_REPLY"),
-                responses::ev_completed_with_tokens("r2", 80),
-            ]),
-        ],
+        vec![responses::sse(vec![
+            responses::ev_assistant_message("m1", "REMOTE_FIRST_REPLY"),
+            responses::ev_completed_with_tokens("r1", 500),
+        ])],
     )
     .await;
 
@@ -1544,13 +1528,12 @@ async fn snapshot_request_shape_remote_pre_turn_fallback_compaction_excluding_in
         serde_json::json!({ "output": "invalid compact payload shape" }),
     )
     .await;
-    let fallback_compacted_history = vec![
-        user_message_item("USER_ONE"),
-        user_message_item(&summary_with_prefix("REMOTE_FALLBACK_SUMMARY")),
-    ];
-    let second_compact_mock = responses::mount_compact_json_once(
+    let post_compact_turn_mock = responses::mount_sse_once(
         harness.server(),
-        serde_json::json!({ "output": fallback_compacted_history }),
+        responses::sse(vec![
+            responses::ev_assistant_message("m2", "REMOTE_POST_COMPACT_SHOULD_NOT_RUN"),
+            responses::ev_completed_with_tokens("r2", 80),
+        ]),
     )
     .await;
 
@@ -1574,51 +1557,42 @@ async fn snapshot_request_shape_remote_pre_turn_fallback_compaction_excluding_in
             final_output_json_schema: None,
         })
         .await?;
+    let error_message = wait_for_event_match(&codex, |event| match event {
+        EventMsg::Error(err) => Some(err.message.clone()),
+        _ => None,
+    })
+    .await;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     assert_eq!(first_compact_mock.requests().len(), 1);
-    assert_eq!(second_compact_mock.requests().len(), 1);
     let requests = responses_mock.requests();
     assert_eq!(
         requests.len(),
-        2,
-        "expected first turn and post-fallback follow-up turn"
+        1,
+        "expected no post-compaction follow-up turn request after compact failure"
+    );
+    assert!(
+        post_compact_turn_mock.requests().is_empty(),
+        "expected turn to stop after compaction failure"
     );
 
     let include_attempt_request = first_compact_mock.single_request();
-    let fallback_attempt_request = second_compact_mock.single_request();
     let include_attempt_shape = request_input_shape(&include_attempt_request);
-    let fallback_attempt_shape = request_input_shape(&fallback_attempt_request);
-    let follow_up_shape = request_input_shape(&requests[1]);
     insta::assert_snapshot!(
-        "remote_pre_turn_compaction_fallback_shapes",
-        sectioned_request_shapes(&[
-            (
-                "Remote Compaction Request (Including Incoming Attempt)",
-                &include_attempt_request
-            ),
-            (
-                "Remote Compaction Request (Fallback Excluding Incoming)",
-                &fallback_attempt_request
-            ),
-            ("Remote Post-Compaction History Request", &requests[1]),
-        ])
+        "remote_pre_turn_compaction_failure_shapes",
+        sectioned_request_shapes(&[(
+            "Remote Compaction Request (Including Incoming User Message)",
+            &include_attempt_request
+        ),])
     );
     assert!(
         include_attempt_shape.contains("USER_TWO"),
         "first remote pre-turn compaction attempt should include incoming user message"
     );
     assert!(
-        !fallback_attempt_shape.contains("USER_TWO"),
-        "fallback remote pre-turn compaction attempt should exclude incoming user message"
-    );
-    assert!(
-        follow_up_shape.contains("USER_TWO"),
-        "post-fallback request should include the incoming user message"
-    );
-    assert!(
-        follow_up_shape.contains("<SUMMARY:REMOTE_FALLBACK_SUMMARY>"),
-        "post-fallback request should include fallback compaction summary"
+        error_message.contains("invalid compact payload shape")
+            || error_message.contains("invalid type: string"),
+        "expected compact parse failure to surface, got {error_message}"
     );
 
     Ok(())

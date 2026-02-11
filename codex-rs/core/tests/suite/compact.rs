@@ -2687,7 +2687,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_user_message() {
+async fn snapshot_request_shape_pre_turn_compaction_context_window_exceeded() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
@@ -2696,25 +2696,17 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
         ev_assistant_message("m1", FIRST_REPLY),
         ev_completed_with_tokens("r1", 500),
     ]);
-    let compact_failed = sse_failed("r2", "server_error", "forced pre-turn compaction failure");
-    let compact_fallback = sse(vec![
-        ev_assistant_message("m3", "FALLBACK_SUMMARY"),
-        ev_completed_with_tokens("r3", 90),
-    ]);
-    let post_compact_turn = sse(vec![
-        ev_assistant_message("m4", FINAL_REPLY),
-        ev_completed_with_tokens("r4", 80),
-    ]);
-    let request_log = mount_sse_sequence(
-        &server,
-        vec![
-            first_turn,
-            compact_failed,
-            compact_fallback,
-            post_compact_turn,
-        ],
-    )
-    .await;
+    let mut responses = vec![first_turn];
+    responses.extend(
+        (0..7).map(|_| {
+            sse_failed(
+                "compact-failed",
+                "context_length_exceeded",
+                "Your input exceeds the context window of this model. Please adjust your input and try again.",
+            )
+        }),
+    );
+    let request_log = mount_sse_sequence(&server, responses).await;
 
     let mut model_provider = non_openai_model_provider(&server);
     model_provider.stream_max_retries = Some(0);
@@ -2751,31 +2743,26 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
         })
         .await
         .expect("submit second user");
+    let error_message = wait_for_event_match(&codex, |event| match event {
+        EventMsg::Error(err) => Some(err.message.clone()),
+        _ => None,
+    })
+    .await;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
-    assert_eq!(
-        requests.len(),
-        4,
-        "expected first turn, failed include attempt, fallback compact, and follow-up turn"
+    assert!(
+        requests.len() >= 2,
+        "expected first turn and at least one compaction request"
     );
 
     let include_attempt_shape = request_input_shape(&requests[1]);
-    let fallback_attempt_shape = request_input_shape(&requests[2]);
-    let follow_up_shape = request_input_shape(&requests[3]);
     insta::assert_snapshot!(
-        "pre_turn_compaction_fallback_shapes",
-        sectioned_request_shapes(&[
-            (
-                "Local Compaction Request (Including Incoming Attempt)",
-                &requests[1]
-            ),
-            (
-                "Local Compaction Request (Fallback Excluding Incoming)",
-                &requests[2]
-            ),
-            ("Local Post-Compaction History Request", &requests[3]),
-        ])
+        "pre_turn_compaction_context_window_exceeded_shapes",
+        sectioned_request_shapes(&[(
+            "Local Compaction Request (Including Incoming User Message)",
+            &requests[1]
+        ),])
     );
 
     assert!(
@@ -2783,12 +2770,14 @@ async fn snapshot_request_shape_pre_turn_fallback_compaction_excluding_incoming_
         "first pre-turn attempt should include incoming user message"
     );
     assert!(
-        !fallback_attempt_shape.contains("USER_TWO"),
-        "fallback pre-turn attempt should exclude incoming user message"
+        error_message.contains(
+            "Incoming user message and/or turn context is too large to fit in context window, even after auto-compaction"
+        ),
+        "expected context window exceeded message, got {error_message}"
     );
     assert!(
-        follow_up_shape.contains("USER_TWO"),
-        "post-fallback turn request should include incoming user message"
+        error_message.contains("incoming_items_tokens_estimate="),
+        "expected token estimate in error message, got {error_message}"
     );
 }
 

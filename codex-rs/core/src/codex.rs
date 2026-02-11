@@ -4009,24 +4009,6 @@ pub(crate) async fn run_turn(
             )
             .await;
         }
-        PreTurnCompactionOutcome::CompactedWithoutIncomingItems => {
-            // Fallback pre-turn compaction excluded this turn's incoming items, so we need to
-            // attach a full canonical context snapshot directly above the incoming user prompt.
-            // We intentionally avoid replaying pre-turn diff items here, since they are derived
-            // against pre-compaction history and can be stale/duplicative after compaction.
-            // Canonical context rebuild keeps model-visible state deterministic after fallback.
-            let initial_context = sess.build_initial_context(turn_context.as_ref()).await;
-            if !initial_context.is_empty() {
-                sess.record_conversation_items(&turn_context, &initial_context)
-                    .await;
-            }
-            sess.record_user_prompt_and_emit_turn_item(
-                turn_context.as_ref(),
-                &input,
-                response_item,
-            )
-            .await;
-        }
     }
 
     if !skill_items.is_empty() {
@@ -4207,17 +4189,9 @@ enum PreTurnCompactionOutcome {
     NotNeeded,
     /// Pre-turn compaction succeeded with incoming turn context + user message included.
     CompactedWithIncomingItems,
-    /// Pre-turn fallback compaction succeeded without incoming items.
-    /// Caller must append canonical context + user message after compaction.
-    CompactedWithoutIncomingItems,
 }
 
-/// Runs pre-turn auto-compaction with a two-step strategy:
-/// 1) compact with incoming turn context + user message included
-/// 2) on failure, compact from end-of-previous-turn history only
-///
-/// On step (2), caller-side turn assembly must append canonical context and the current user
-/// message after compaction so the latest message still has correct context directly above it.
+/// Runs pre-turn auto-compaction with incoming turn context + user message included.
 async fn run_pre_turn_auto_compaction_if_needed(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -4237,46 +4211,30 @@ async fn run_pre_turn_auto_compaction_if_needed(
         return Ok(PreTurnCompactionOutcome::NotNeeded);
     }
 
-    if run_auto_compact(
+    let compact_result = run_auto_compact(
         sess,
         turn_context,
         AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
         TurnContextReinjection::ReinjectAboveLastRealUser,
         Some(incoming_turn_items.to_vec()),
     )
-    .await
-    .is_ok()
-    {
-        return Ok(PreTurnCompactionOutcome::CompactedWithIncomingItems);
-    }
-
-    // Fallback: compact from the end of the previous turn only (no incoming user/context, and no
-    // turn-context reinjection into pre-turn history), then append canonical context + incoming
-    // user in `run_turn`.
-    let fallback_result = run_auto_compact(
-        sess,
-        turn_context,
-        AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
-        TurnContextReinjection::Skip,
-        None,
-    )
     .await;
-    if let Err(err) = fallback_result {
+
+    if let Err(err) = compact_result {
         if matches!(err, CodexErr::ContextWindowExceeded) {
             error!(
                 turn_id = %turn_context.sub_id,
-                auto_compact_callsite = ?AutoCompactCallsite::PreTurnExcludingIncomingUserMessage,
+                auto_compact_callsite = ?AutoCompactCallsite::PreTurnIncludingIncomingUserMessage,
                 incoming_items_tokens_estimate,
                 auto_compact_limit,
-                reason = "pre-turn fallback compaction without incoming items exceeded context window",
+                reason = "pre-turn compaction including incoming items exceeded context window",
                 "incoming user/context is too large for pre-turn auto-compaction flow"
             );
-            return Err(CodexErr::ContextWindowExceeded);
         }
         return Err(err);
     }
 
-    Ok(PreTurnCompactionOutcome::CompactedWithoutIncomingItems)
+    Ok(PreTurnCompactionOutcome::CompactedWithIncomingItems)
 }
 
 fn is_projected_submission_over_auto_compact_limit(
