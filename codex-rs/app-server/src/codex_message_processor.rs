@@ -262,28 +262,12 @@ pub(crate) struct TurnSummary {
     pub(crate) last_error: Option<TurnError>,
 }
 
+#[derive(Default)]
 pub(crate) struct ThreadState {
     pub(crate) pending_interrupts: PendingInterruptQueue,
     pub(crate) pending_rollbacks: Option<ConnectionRequestId>,
     pub(crate) turn_summary: TurnSummary,
     pub(crate) listener_cancel_txs: HashMap<Uuid, oneshot::Sender<()>>,
-}
-
-impl Default for ApiVersion {
-    fn default() -> Self {
-        Self::V2
-    }
-}
-
-impl Default for ThreadState {
-    fn default() -> Self {
-        Self {
-            pending_interrupts: Vec::default(),
-            pending_rollbacks: Option::default(),
-            turn_summary: TurnSummary::default(),
-            listener_cancel_txs: HashMap::default(),
-        }
-    }
 }
 
 impl ThreadState {
@@ -405,9 +389,10 @@ pub(crate) struct CodexMessageProcessor {
     feedback: CodexFeedback,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) enum ApiVersion {
     V1,
+    #[default]
     V2,
 }
 
