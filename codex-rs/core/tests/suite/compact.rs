@@ -170,7 +170,15 @@ fn request_input_shape(request: &ResponsesRequest) -> String {
                     let output = item
                         .get("output")
                         .and_then(Value::as_str)
-                        .map(normalize_shape_text)
+                        .map(|output| {
+                            if output.starts_with("unsupported call: ")
+                                || output.starts_with("unsupported custom tool call: ")
+                            {
+                                "<UNSUPPORTED_TOOL_OUTPUT>".to_string()
+                            } else {
+                                normalize_shape_text(output)
+                            }
+                        })
                         .unwrap_or_else(|| "<NON_STRING_OUTPUT>".to_string());
                     format!("{idx:02}:function_call_output:{output}")
                 }

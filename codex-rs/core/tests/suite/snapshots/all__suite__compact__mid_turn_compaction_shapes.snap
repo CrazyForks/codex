@@ -8,7 +8,7 @@ expression: "sectioned_request_shapes(&[(\"Compaction Request\", &requests[1]),\
 02:message/user:<ENVIRONMENT_CONTEXT>
 03:message/user:MID_TURN_USER
 04:function_call/unsupported_tool
-05:function_call_output:unsupported call: unsupported_tool
+05:function_call_output:<UNSUPPORTED_TOOL_OUTPUT>
 06:message/user:<SUMMARIZATION_PROMPT>
 
 ## Post-Compaction History Request
