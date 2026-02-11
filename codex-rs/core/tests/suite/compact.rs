@@ -164,7 +164,12 @@ fn request_input_shape(request: &ResponsesRequest) -> String {
                 }
                 "function_call" => {
                     let name = item.get("name").and_then(Value::as_str).unwrap_or("unknown");
-                    format!("{idx:02}:function_call/{name}")
+                    let normalized_name = if name == DUMMY_FUNCTION_NAME {
+                        "<TOOL_CALL>"
+                    } else {
+                        name
+                    };
+                    format!("{idx:02}:function_call/{normalized_name}")
                 }
                 "function_call_output" => {
                     let output = item
@@ -174,7 +179,7 @@ fn request_input_shape(request: &ResponsesRequest) -> String {
                             if output.starts_with("unsupported call: ")
                                 || output.starts_with("unsupported custom tool call: ")
                             {
-                                "<UNSUPPORTED_TOOL_OUTPUT>".to_string()
+                                "<TOOL_ERROR_OUTPUT>".to_string()
                             } else {
                                 normalize_shape_text(output)
                             }
