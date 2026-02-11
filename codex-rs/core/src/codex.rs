@@ -4278,9 +4278,6 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     auto_compact_callsite: AutoCompactCallsite,
-    // Explicitly controls post-compaction transcript shaping; do not infer this from
-    // `incoming_items`, because pre-turn fallback excludes incoming items but still needs a
-    // distinct reinjection policy from other callsites.
     turn_context_reinjection: TurnContextReinjection,
     incoming_items: Option<Vec<ResponseItem>>,
 ) -> CodexResult<()> {
