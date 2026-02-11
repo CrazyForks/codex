@@ -2192,9 +2192,6 @@ impl Session {
         compacted_history: Vec<ResponseItem>,
         turn_context_reinjection: TurnContextReinjection,
     ) -> Vec<ResponseItem> {
-        // Session owns canonical context construction; compact module owns compacted-history
-        // shaping. Keep this as the seam so both local and remote compaction paths share the
-        // same reinjection semantics.
         let initial_context = self.build_initial_context(turn_context).await;
         compact::process_compacted_history(
             compacted_history,
