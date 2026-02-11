@@ -99,19 +99,15 @@ pub(crate) async fn run_compact_task(
         collaboration_mode_kind: turn_context.collaboration_mode.mode,
     });
     sess.send_event(&turn_context, start_event).await;
-    if let Err(err) = run_compact_task_inner(
-        sess.clone(),
-        turn_context.clone(),
+    run_compact_task_inner(
+        sess,
+        turn_context,
         input,
         None,
         TurnContextReinjection::ReinjectAboveLastRealUser,
         None,
     )
     .await
-    {
-        return Err(err);
-    }
-    Ok(())
 }
 
 async fn run_compact_task_inner(
