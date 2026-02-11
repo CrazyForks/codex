@@ -338,11 +338,9 @@ impl ThreadStateManager {
         Some(thread_id)
     }
 
-    fn remove_thread_state(&mut self, thread_id: ThreadId) {
-        if let Some(thread_state) = self.thread_states.remove(&thread_id)
-            && let Ok(mut state) = thread_state.try_lock()
-        {
-            state.clear_listeners();
+    async fn remove_thread_state(&mut self, thread_id: ThreadId) {
+        if let Some(thread_state) = self.thread_states.remove(&thread_id) {
+            thread_state.lock().await.clear_listeners();
         }
         self.thread_id_by_subscription
             .retain(|_, existing_thread_id| *existing_thread_id != thread_id);
@@ -4388,7 +4386,9 @@ impl CodexMessageProcessor {
                     error!("failed to submit Shutdown to thread {thread_id}: {err}");
                 }
             }
-            self.thread_state_manager.remove_thread_state(thread_id);
+            self.thread_state_manager
+                .remove_thread_state(thread_id)
+                .await;
         }
 
         if state_db_ctx.is_none() {
