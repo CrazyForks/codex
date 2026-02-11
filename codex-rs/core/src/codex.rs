@@ -2169,11 +2169,11 @@ impl Session {
                         history.replace(replacement.clone());
                     } else {
                         let user_messages = collect_user_messages(history.raw_items());
-                        let rebuilt = compact::build_compacted_history(
-                            self.build_initial_context(turn_context).await,
+                        let mut rebuilt = self.build_initial_context(turn_context).await;
+                        rebuilt.extend(compact::build_compacted_history(
                             &user_messages,
                             &compacted.message,
-                        );
+                        ));
                         history.replace(rebuilt);
                     }
                 }
@@ -7228,8 +7228,8 @@ mod tests {
             .clone()
             .for_prompt(&reconstruction_turn.model_info.input_modalities);
         let user_messages1 = collect_user_messages(&snapshot1);
-        let rebuilt1 =
-            compact::build_compacted_history(initial_context.clone(), &user_messages1, summary1);
+        let mut rebuilt1 = initial_context.clone();
+        rebuilt1.extend(compact::build_compacted_history(&user_messages1, summary1));
         live_history.replace(rebuilt1);
         rollout_items.push(RolloutItem::Compacted(CompactedItem {
             message: summary1.to_string(),
@@ -7271,8 +7271,8 @@ mod tests {
             .clone()
             .for_prompt(&reconstruction_turn.model_info.input_modalities);
         let user_messages2 = collect_user_messages(&snapshot2);
-        let rebuilt2 =
-            compact::build_compacted_history(initial_context.clone(), &user_messages2, summary2);
+        let mut rebuilt2 = initial_context.clone();
+        rebuilt2.extend(compact::build_compacted_history(&user_messages2, summary2));
         live_history.replace(rebuilt2);
         rollout_items.push(RolloutItem::Compacted(CompactedItem {
             message: summary2.to_string(),

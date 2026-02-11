@@ -267,7 +267,12 @@ async fn run_compact_task_inner(
         }
         TurnContextReinjection::Skip => Vec::new(),
     };
-    let mut new_history = build_compacted_history(initial_context, &user_messages, &summary_text);
+    let compacted_history = build_compacted_history(&user_messages, &summary_text);
+    let mut new_history = process_compacted_history(
+        compacted_history,
+        &initial_context,
+        turn_context_reinjection,
+    );
     let ghost_snapshots: Vec<ResponseItem> = history_items
         .iter()
         .filter(|item| matches!(item, ResponseItem::GhostSnapshot { .. }))
@@ -392,24 +397,18 @@ fn should_keep_compacted_history_item(item: &ResponseItem) -> bool {
 }
 
 pub(crate) fn build_compacted_history(
-    initial_context: Vec<ResponseItem>,
     user_messages: &[String],
     summary_text: &str,
 ) -> Vec<ResponseItem> {
-    build_compacted_history_with_limit(
-        initial_context,
-        user_messages,
-        summary_text,
-        COMPACT_USER_MESSAGE_MAX_TOKENS,
-    )
+    build_compacted_history_with_limit(user_messages, summary_text, COMPACT_USER_MESSAGE_MAX_TOKENS)
 }
 
 fn build_compacted_history_with_limit(
-    mut history: Vec<ResponseItem>,
     user_messages: &[String],
     summary_text: &str,
     max_tokens: usize,
 ) -> Vec<ResponseItem> {
+    let mut history = Vec::new();
     let mut selected_messages: Vec<String> = Vec::new();
     if max_tokens > 0 {
         let mut remaining = max_tokens;
@@ -620,7 +619,6 @@ do things
         let max_tokens = 16;
         let big = "word ".repeat(200);
         let history = super::build_compacted_history_with_limit(
-            Vec::new(),
             std::slice::from_ref(&big),
             "SUMMARY",
             max_tokens,
@@ -657,11 +655,10 @@ do things
 
     #[test]
     fn build_token_limited_compacted_history_appends_summary_message() {
-        let initial_context: Vec<ResponseItem> = Vec::new();
         let user_messages = vec!["first user message".to_string()];
         let summary_text = "summary text";
 
-        let history = build_compacted_history(initial_context, &user_messages, summary_text);
+        let history = build_compacted_history(&user_messages, summary_text);
         assert!(
             !history.is_empty(),
             "expected compacted history to include summary"
